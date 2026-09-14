@@ -262,3 +262,67 @@ async def discord_interactions_endpoint(request: Request, background_tasks: Back
         status_code=status.HTTP_400_BAD_REQUEST,
         detail=f"Unsupported interaction type: {interaction_type}"
     )
+
+@router.post("/github", status_code=status.HTTP_200_OK)
+async def github_webhook(request: Request):
+    """
+    GitHub Webhook Ingestion Endpoint.
+    Handles pull_request, pull_request_review, issue_comment, issues, and push events.
+    Enforces HMAC-SHA256 signature verification, cross-channel identity resolution,
+    and stores records in the memory repository.
+    """
+    from app.channels.github import github_connector, verify_github_signature
+
+    body_bytes = await request.body()
+    sig_header = request.headers.get("X-Hub-Signature-256")
+    event_type = request.headers.get("X-GitHub-Event")
+
+    if not event_type:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing X-GitHub-Event header."
+        )
+
+    secret = settings.github_webhook_secret
+    if secret:
+        if not verify_github_signature(body_bytes, sig_header, secret):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid GitHub webhook HMAC-SHA256 signature."
+            )
+
+    try:
+        payload = json.loads(body_bytes.decode("utf-8"))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Malformed JSON payload: {e}"
+        )
+
+    org_id = request.query_params.get("organization_id", settings.DEFAULT_DOMAIN)
+
+    try:
+        events = github_connector.parse_webhook_payload(event_type, payload, org_id)
+    except Exception as e:
+        logger.warning(f"Error parsing GitHub event '{event_type}': {e}")
+        return {"status": "skipped", "reason": str(e), "event_type": event_type}
+
+    ingested_records = []
+    ingested_chunks = []
+    for ev in events:
+        record, chunks, receipt = github_connector.ingest_event(ev)
+        github_connector.memory_store.add_record(record)
+        for chunk in chunks:
+            github_connector.memory_store.add_chunk(chunk)
+        ingested_records.append(record.id)
+        ingested_chunks.extend([c.id for c in chunks])
+
+    return {
+        "status": "ingested",
+        "event_type": event_type,
+        "organization_id": org_id,
+        "records_count": len(ingested_records),
+        "chunks_count": len(ingested_chunks),
+        "record_ids": ingested_records,
+        "chunk_ids": ingested_chunks
+    }

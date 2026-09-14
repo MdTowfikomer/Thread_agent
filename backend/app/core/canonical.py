@@ -22,10 +22,33 @@ class SourceType(str, Enum):
 class ChannelType(str, Enum):
     DISCORD = "discord"
     SLACK = "slack"
+    GITHUB = "github"
     TELEGRAM = "telegram"
     WHATSAPP = "whatsapp"
 
-# Identity Mapping for Channel Users
+class LinkVerificationType(str, Enum):
+    OAUTH_VERIFIED = "oauth_verified"
+    EMAIL_VERIFIED = "email_verified"
+    ORGANIZER_MANUAL = "organizer_manual"
+    CLAIMED_UNVERIFIED = "claimed_unverified"
+
+# Immutable Channel Account Link
+class ChannelAccountLink(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    organization_id: str
+    person_id: str
+    channel_type: ChannelType
+    account_id: str
+    username: Optional[str] = None
+    display_name: Optional[str] = None
+    email: Optional[str] = None
+    link_type: LinkVerificationType = LinkVerificationType.CLAIMED_UNVERIFIED
+    confidence: float = 0.0
+    evidence: Dict[str, Any] = Field(default_factory=dict)
+    is_verified: bool = False
+    linked_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+# Identity Mapping for Channel Users (backwards compatible)
 class IdentityMapping(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     organization_id: str
@@ -133,6 +156,10 @@ class SourceRecord(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
     hash: str = ""
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @property
+    def author(self) -> Optional[str]:
+        return self.author_id
 
 # 5. MemoryChunk
 class MemoryChunk(BaseModel):

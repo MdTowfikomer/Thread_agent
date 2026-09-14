@@ -118,4 +118,9 @@ class Settings:
     def discord_bot_token(self) -> str:
         return os.getenv("DISCORD_BOT_TOKEN", os.getenv("THREAD_DISCORD_BOT_TOKEN", "")).strip()
 
+    # GitHub Webhook HMAC-SHA256 Secret
+    @property
+    def github_webhook_secret(self) -> str:
+        return os.getenv("GITHUB_WEBHOOK_SECRET", "").strip()
+
 settings = Settings()

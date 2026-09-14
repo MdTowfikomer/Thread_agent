@@ -72,13 +72,42 @@ class MigrationRunner:
             ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS checksum TEXT;
         """)
 
+    def load_manifest(self) -> Dict[str, Dict[str, Any]]:
+        """Loads authoritative reviewed migration manifest if present."""
+        manifest_path = self.migrations_dir / "manifest.json"
+        if manifest_path.exists():
+            try:
+                import json
+                data = json.loads(manifest_path.read_text(encoding="utf-8"))
+                return data.get("migrations", {})
+            except Exception as e:
+                logger.warning(f"Failed to read migration manifest: {e}")
+        return {}
+
     def validate_and_sync_checksums(self, cursor, migrations: List[Migration]) -> None:
         """
-        Validates SHA-256 checksums of all applied migrations against file contents.
+        Validates SHA-256 checksums against the authoritative reviewed manifest.json
+        and verifies database records to prevent retroactive migration tampering.
         If an applied migration was modified retroactively, raises SchemaDriftError.
-        Backfills checksums for any legacy records missing them.
+        Backfills checksums for any legacy database records strictly using the manifest.
         """
         self.init_tracker_table(cursor)
+        manifest = self.load_manifest()
+
+        # 1. Validate all local migration files against the reviewed historical manifest
+        migration_map = {m.version: m for m in migrations}
+        for version, meta in manifest.items():
+            expected_sha = meta.get("sha256")
+            if version in migration_map and expected_sha:
+                current_sha = migration_map[version].checksum
+                if current_sha != expected_sha:
+                    raise SchemaDriftError(
+                        f"CRITICAL: Local migration file '{version}' does not match the reviewed historical manifest! "
+                        f"Expected (manifest): {expected_sha}, Got (file): {current_sha}. "
+                        "Historical migrations are permanently frozen. Put all schema changes into a new migration file."
+                    )
+
+        # 2. Validate applied database records against manifest and disk
         cursor.execute("SELECT version, checksum FROM schema_migrations;")
         db_records = {}
         for row in cursor.fetchall():
@@ -86,24 +115,30 @@ class MigrationRunner:
                 db_records[row[0]] = row[1]
             elif len(row) == 1:
                 db_records[row[0]] = None
-        migration_map = {m.version: m for m in migrations}
 
         for version, recorded_checksum in db_records.items():
-            if version in migration_map:
-                current_checksum = migration_map[version].checksum
-                if recorded_checksum:
-                    if recorded_checksum != current_checksum:
-                        raise SchemaDriftError(
-                            f"CRITICAL: Applied migration '{version}' was modified retroactively! "
-                            f"Recorded checksum: {recorded_checksum}, Current file checksum: {current_checksum}. "
-                            "Applied migrations are permanently immutable. Put all changes into a new migration file."
-                        )
-                else:
-                    # Backfill checksum from frozen file
-                    cursor.execute(
-                        "UPDATE schema_migrations SET checksum = %s WHERE version = %s AND checksum IS NULL;",
-                        (current_checksum, version)
+            expected_checksum = None
+            if version in manifest and manifest[version].get("sha256"):
+                expected_checksum = manifest[version]["sha256"]
+            elif version in migration_map:
+                expected_checksum = migration_map[version].checksum
+
+            if not expected_checksum:
+                continue
+
+            if recorded_checksum:
+                if recorded_checksum != expected_checksum:
+                    raise SchemaDriftError(
+                        f"CRITICAL: Applied database migration '{version}' checksum mismatch! "
+                        f"Recorded in DB: {recorded_checksum}, Expected: {expected_checksum}. "
+                        "Applied migrations are permanently immutable. Put all changes into a new migration file."
                     )
+            else:
+                # Backfill checksum strictly from manifest or verified file
+                cursor.execute(
+                    "UPDATE schema_migrations SET checksum = %s WHERE version = %s AND checksum IS NULL;",
+                    (expected_checksum, version)
+                )
 
     def get_applied_migrations(self, cursor) -> Set[str]:
         """Retrieves set of already applied migration versions."""

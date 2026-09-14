@@ -80,67 +80,120 @@ def get_production_embedder(
 
 class ReembeddingJob:
     """
-    Resumable Re-embedding Job for 128-to-768 Vector Migration.
-    - Selects chunks marked with embedding_status = 'pending_reembed' using FOR UPDATE SKIP LOCKED
-      so multiple workers can make concurrent progress without lock contention.
+    Resumable, Fault-Tolerant Re-embedding Job for 128-to-768 Vector Migration.
+    - Claims batches using short-lived non-blocking leases (embedding_status = 'processing')
+      via FOR UPDATE SKIP LOCKED.
+    - Commits the lease immediately so database row locks are NOT held during external HTTP embedding calls.
     - Generates 768-dimensional embeddings using the configured neural provider.
-    - Fails closed on provider failures to prevent index poisoning.
-    - Persists the actual model returned (e.g. models/text-embedding-004, deterministic-v1) in provenance.
-    - Commits per batch (making the job 100% resumable).
-    - Once all pending chunks are re-embedded, enforces NOT NULL on embedding and enables the full 768-dim HNSW index.
+    - Persists actual model name, dimension, timestamp, version, and attempts directly to JSONB `provenance`.
+    - Handles single-row embedding failures without aborting the batch:
+        - Increments attempt count and releases lease for retry if attempts < max_retries.
+        - Moves permanently failing rows to 'failed_reembed' dead-letter queue with operator-visible error
+          records once attempts >= max_retries.
+    - Commits per-row so progress is never lost on interruption or single-item failure.
+    - Once all pending chunks are re-embedded, enforces NOT NULL and full HNSW index.
     """
     def __init__(
         self,
         db_url: Optional[str] = None,
         batch_size: int = 50,
+        lease_seconds: int = 300,
+        max_retries: int = 3,
         embed_fn: Optional[Callable[[str], Any]] = None,
         embedding_model: Optional[str] = None,
         allow_deterministic: bool = False
     ):
         self.db_url = db_url or os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
         self.batch_size = batch_size
+        self.lease_seconds = lease_seconds
+        self.max_retries = max_retries
         self.allow_deterministic = allow_deterministic
         self.embedding_model = embedding_model
         self.embed_fn = embed_fn or get_production_embedder(allow_deterministic=allow_deterministic)
 
     def get_pending_count(self, conn) -> int:
-        """Returns total number of chunks still pending re-embedding."""
+        """Returns total number of chunks still pending re-embedding or with expired leases."""
         with conn.cursor() as cur:
-            cur.execute("SELECT count(*) FROM memory_chunks WHERE embedding_status = 'pending_reembed';")
+            cur.execute("""
+                SELECT count(*) 
+                FROM memory_chunks 
+                WHERE embedding_status = 'pending_reembed'
+                   OR (embedding_status = 'processing' AND (reembed_lease_until IS NULL OR reembed_lease_until < NOW()));
+            """)
+            row = cur.fetchone()
+            return row[0] if row else 0
+
+    def get_failed_count(self, conn) -> int:
+        """Returns total number of chunks in dead-letter state ('failed_reembed')."""
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM memory_chunks WHERE embedding_status = 'failed_reembed';")
             row = cur.fetchone()
             return row[0] if row else 0
 
     def process_batch(self, conn, limit: Optional[int] = None) -> int:
         """
-        Processes a single transactional batch of pending chunks.
-        Uses FOR UPDATE SKIP LOCKED to prevent lock contention across multiple workers.
-        Commits on completion so progress is never lost on interruption.
+        Processes a batch of chunks with non-blocking lease acquisition and isolated error handling.
+        Returns the number of claimed chunks processed.
         """
+        import json
+        from datetime import datetime, timezone
+
         batch_limit = limit or self.batch_size
+        rows = []
+
+        # 1. Lease Acquisition (Fast transaction with FOR UPDATE SKIP LOCKED)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("""
-                SELECT id, title, content, author, tags
-                FROM memory_chunks
-                WHERE embedding_status = 'pending_reembed'
-                ORDER BY id ASC
-                LIMIT %s
-                FOR UPDATE SKIP LOCKED;
-            """, (batch_limit,))
-            rows = cur.fetchall()
+            try:
+                cur.execute("""
+                    WITH claimable AS (
+                        SELECT id
+                        FROM memory_chunks
+                        WHERE embedding_status = 'pending_reembed'
+                           OR (embedding_status = 'processing' AND (reembed_lease_until IS NULL OR reembed_lease_until < NOW()))
+                        ORDER BY id ASC
+                        LIMIT %s
+                        FOR UPDATE SKIP LOCKED
+                    )
+                    UPDATE memory_chunks
+                    SET embedding_status = 'processing',
+                        reembed_lease_until = NOW() + (%s || ' seconds')::interval,
+                        reembed_attempts = COALESCE(reembed_attempts, 0) + 1
+                    FROM claimable
+                    WHERE memory_chunks.id = claimable.id
+                    RETURNING memory_chunks.id, memory_chunks.title, memory_chunks.content, 
+                              memory_chunks.author, memory_chunks.tags, memory_chunks.reembed_attempts;
+                """, (batch_limit, str(self.lease_seconds)))
+                rows = cur.fetchall()
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                logger.warning(f"Lease acquisition query failed, attempting basic select: {e}")
+                cur.execute("""
+                    SELECT id, title, content, author, tags
+                    FROM memory_chunks
+                    WHERE embedding_status = 'pending_reembed'
+                    ORDER BY id ASC
+                    LIMIT %s
+                    FOR UPDATE SKIP LOCKED;
+                """, (batch_limit,))
+                rows = cur.fetchall()
 
         if not rows:
             return 0
 
-        with conn.cursor() as cur:
-            for row in rows:
-                chunk_id = row["id"]
-                title = row["title"] or ""
-                content = row["content"] or ""
-                author = row["author"] or ""
-                tags = row["tags"] or []
-                tag_str = " ".join(tags) if isinstance(tags, list) else ""
+        # 2. Remote Embedding & Per-Item Isolated Persistence
+        for row in rows:
+            chunk_id = row["id"]
+            attempts = row.get("reembed_attempts", 1) or 1
+            title = row.get("title") or ""
+            content = row.get("content") or ""
+            author = row.get("author") or ""
+            tags = row.get("tags") or []
+            tag_str = " ".join(tags) if isinstance(tags, list) else ""
 
-                text_to_embed = f"{title} {author} {tag_str}: {content}".strip()
+            text_to_embed = f"{title} {author} {tag_str}: {content}".strip()
+
+            try:
                 result = self.embed_fn(text_to_embed)
 
                 if isinstance(result, tuple) and len(result) >= 3:
@@ -158,19 +211,59 @@ class ReembeddingJob:
                         f"Generated vector dimension {len(vector)} does not match target {settings.EMBEDDING_DIMENSION}"
                     )
 
-                # Format as pgvector string literal [v1, v2, ...]
                 vec_literal = "[" + ",".join(str(float(x)) for x in vector) + "]"
+                prov_meta = json.dumps({
+                    "reembedding": {
+                        "status": "completed",
+                        "model": model_name,
+                        "dimension": dim,
+                        "reembedded_at": datetime.now(timezone.utc).isoformat(),
+                        "job_version": "1.1",
+                        "attempts": attempts
+                    }
+                })
 
-                cur.execute("""
-                    UPDATE memory_chunks
-                    SET embedding = %s::vector,
-                        embedding_model = %s,
-                        embedding_dimension = %s,
-                        embedding_status = 'ready'
-                    WHERE id = %s;
-                """, (vec_literal, model_name, dim, chunk_id))
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        UPDATE memory_chunks
+                        SET embedding = %s::vector,
+                            embedding_model = %s,
+                            embedding_dimension = %s,
+                            embedding_status = 'ready',
+                            reembed_lease_until = NULL,
+                            reembed_error = NULL,
+                            provenance = COALESCE(provenance, '{}'::jsonb) || %s::jsonb
+                        WHERE id = %s;
+                    """, (vec_literal, model_name, dim, prov_meta, chunk_id))
+                conn.commit()
 
-        conn.commit()
+            except Exception as e:
+                conn.rollback()
+                logger.warning(f"Error re-embedding chunk {chunk_id} (attempt {attempts}): {e}")
+
+                is_dead_letter = attempts >= self.max_retries
+                status = "failed_reembed" if is_dead_letter else "pending_reembed"
+                prov_meta = json.dumps({
+                    "reembedding": {
+                        "status": "failed" if is_dead_letter else "retry_scheduled",
+                        "error": str(e),
+                        "failed_at": datetime.now(timezone.utc).isoformat(),
+                        "job_version": "1.1",
+                        "attempts": attempts
+                    }
+                })
+
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        UPDATE memory_chunks
+                        SET embedding_status = %s,
+                            reembed_lease_until = NULL,
+                            reembed_error = %s,
+                            provenance = COALESCE(provenance, '{}'::jsonb) || %s::jsonb
+                        WHERE id = %s;
+                    """, (status, str(e), prov_meta, chunk_id))
+                conn.commit()
+
         return len(rows)
 
     def finalize_schema(self, conn):
@@ -178,8 +271,17 @@ class ReembeddingJob:
         Enforces NOT NULL constraint on embedding and builds the full 768 HNSW index
         once all pending chunks are re-embedded.
         """
-        logger.info("Enforcing NOT NULL constraint on memory_chunks.embedding and building full HNSW index...")
+        logger.info("Checking for failed or null embeddings before finalizing schema...")
         with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM memory_chunks WHERE embedding_status = 'failed_reembed';")
+            failed_count = cur.fetchone()[0]
+            if failed_count > 0:
+                logger.warning(
+                    f"Operator Attention: {failed_count} chunks are in 'failed_reembed' status. "
+                    "Leaving NOT NULL unconstrained and preserving partial HNSW index."
+                )
+                return
+
             cur.execute("ALTER TABLE memory_chunks ALTER COLUMN embedding SET NOT NULL;")
             cur.execute("DROP INDEX IF EXISTS idx_memory_chunks_embedding;")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_memory_chunks_embedding ON memory_chunks USING hnsw (embedding vector_cosine_ops);")

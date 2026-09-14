@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Thread Database Migrations Historical Checksum Manifest",
+  "description": "Authoritative immutable record of applied database migrations and their SHA-256 checksums.",
+  "version": 1,
+  "manifest_created_at": "2026-09-15T03:45:00Z",
+  "migrations": {
+    "001_initial_schema": {
+      "sha256": "910d800868f7b377e1965a0b76bf0aeae9c2a5eb905afb7c22846a3a6737fb45",
+      "status": "frozen",
+      "description": "Initial schema: source_records, memory_chunks, guild_installations, processed_interactions, import_approvals"
+    },
+    "002_provenance_and_schema_hardening": {
+      "sha256": "71d0b8a12f41240e09794baacd0ef44e004927b79d3bb2e6ad7cf1b929ca474c",
+      "status": "frozen",
+      "description": "Provenance & schema hardening: source_uri, source_timestamp, quarantine unverifiable chunks, generated fts, initial embedding_v2 swap"
+    },
+    "003_zero_direct_access_rls": {
+      "sha256": "dbb792072e6ce4250f70e9a8760d51a914243056bfde2dfd74f3d2eb02525ef5",
+      "status": "frozen",
+      "description": "Zero direct access RLS: Force RLS on all tables, restrict direct SELECT/INSERT/UPDATE to service_role"
+    },
+    "004_hybrid_search_rpc": {
+      "sha256": "f7dffdd455ab12d57e1615ed5f5a1176323acc4f0f583bea9046eaf9954acf93",
+      "status": "frozen",
+      "description": "Hybrid search RPC: Pre-retrieval SQL ACL enforcement, dense pgvector cosine similarity + sparse PostgreSQL FTS with RRF"
+    },
+    "005_transactional_rpcs": {
+      "sha256": "ea73d6fa69e681904b2fb583ca5c5f2e2ff2db2487f69f16e8806b5eb3ec5ef6",
+      "status": "frozen",
+      "description": "Transactional persistence & promotion: persist_record_and_chunks and promote_quarantined_chunks atomic RPCs"
+    },
+    "006_reembedding_and_status_tracking": {
+      "sha256": "86b1c0a23cd12aa3d9fdf57c34b7a963b733f0e91118ce8d481adfbb17a5379c",
+      "status": "frozen",
+      "description": "Re-embedding & status tracking: adds legacy_embedding_128, embedding_status ('ready'/'pending_reembed'), updates hybrid_search"
+    },
+    "007_reembedding_leases_and_deadletter": {
+      "sha256": "2de48c913e7352552343986e6d7e39e480fdeebd7f503e5fb63460f2d57123b3",
+      "status": "active",
+      "description": "Re-embedding leases, retries, and dead-letter queue: non-blocking lease claiming, attempt tracking, failure tolerance"
+    }
+  }
+}

@@ -84,10 +84,11 @@ def test_migration_runner_state_tracking_and_idempotent_execution():
     mock_cursor.fetchall.return_value = []
 
     applied = runner.run_all(mock_conn)
-    assert len(applied) >= 6
+    assert len(applied) >= 7
     assert "001_initial_schema" in applied
     assert "005_transactional_rpcs" in applied
     assert "006_reembedding_and_status_tracking" in applied
+    assert "007_reembedding_leases_and_deadletter" in applied
 
     # Verify advisory lock acquired and released
     lock_calls = [
@@ -141,6 +142,39 @@ def test_dump_all_sql_produces_valid_consolidated_script():
     assert "CREATE TABLE IF NOT EXISTS source_records" in dump
     assert "CREATE OR REPLACE FUNCTION persist_record_and_chunks" in dump
     assert 'DROP POLICY IF EXISTS "service_role_all_source_records"' in dump
+
+def test_manifest_validation_and_drift_detection():
+    from app.data.migrator import SchemaDriftError, Migration
+    runner = MigrationRunner()
+    manifest = runner.load_manifest()
+    assert len(manifest) >= 7, "Manifest must contain all frozen historical migrations 001-007"
+    assert "001_initial_schema" in manifest
+    assert "002_provenance_and_schema_hardening" in manifest
+    assert "007_reembedding_leases_and_deadletter" in manifest
+
+    mock_cursor = MagicMock()
+    # Case 1: Tampered local migration file differing from reviewed historical manifest
+    tampered_migration = Migration("001_initial_schema", runner.migrations_dir / "001_initial_schema.sql")
+    tampered_migration._sql = "-- TAMPERED SQL"
+
+    with pytest.raises(SchemaDriftError) as exc_info:
+        runner.validate_and_sync_checksums(mock_cursor, [tampered_migration])
+    assert "does not match the reviewed historical manifest" in str(exc_info.value)
+
+    # Case 2: Database record with tampered checksum
+    valid_migrations = runner.get_migrations()
+    mock_cursor.fetchall.return_value = [("001_initial_schema", "deadbeef_tampered_checksum")]
+
+    with pytest.raises(SchemaDriftError) as exc_info2:
+        runner.validate_and_sync_checksums(mock_cursor, valid_migrations)
+    assert "checksum mismatch" in str(exc_info2.value)
+
+    # Case 3: Legacy DB record missing checksum is backfilled strictly from manifest
+    mock_cursor.fetchall.return_value = [("001_initial_schema", None)]
+    runner.validate_and_sync_checksums(mock_cursor, valid_migrations)
+    backfill_calls = [c for c in mock_cursor.execute.call_args_list if "UPDATE schema_migrations" in str(c)]
+    assert len(backfill_calls) == 1
+    assert manifest["001_initial_schema"]["sha256"] in str(backfill_calls[0])
 
 def test_live_migration_smoke_test():
     """

@@ -93,6 +93,14 @@ class MemoryRepository:
         self.in_memory.add_chunks(prepared_chunks)
         return True, len(prepared_chunks)
 
+    def persist_record_and_chunks(
+        self,
+        record: SourceRecord,
+        chunks: List[MemoryChunk]
+    ) -> Tuple[bool, int]:
+        """Alias for save_record_and_chunks to match transaction persistence interface."""
+        return self.save_record_and_chunks(record, chunks)
+
     def save_records_and_chunks(
         self,
         records: List[SourceRecord],

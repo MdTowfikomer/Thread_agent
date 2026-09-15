@@ -1,11 +1,13 @@
 import json
 import hmac
 import hashlib
+import uuid
 import pytest
 from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.core.config import settings
 from app.core.canonical import ChannelType, PermissionLevel, SourceType
 from app.channels.github import (
     GitHubConnector,
@@ -13,6 +15,9 @@ from app.channels.github import (
     verify_github_signature,
     parse_iso_datetime
 )
+from app.channels.delivery import webhook_delivery_store
+from app.channels.installation import github_binding_store
+from app.memory.repository import memory_repository
 from app.identity.service import identity_service
 
 client = TestClient(app)
@@ -200,10 +205,116 @@ def test_github_unmapped_user_prohibits_automatic_merge():
     assert chunks[0].provenance["identity_resolution"]["is_verified"] is False
     assert chunks[0].provenance["identity_resolution"]["is_synthetic_public"] is True
 
-def test_github_webhook_endpoint_live():
+def make_github_signature(payload_bytes: bytes, secret: str) -> str:
+    mac = hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
+    return f"sha256={mac}"
+
+def test_github_webhook_missing_secret_fails_closed(monkeypatch):
+    """If GITHUB_WEBHOOK_SECRET is not configured on the server, endpoint returns 500 fail-closed."""
+    monkeypatch.delenv("GITHUB_WEBHOOK_SECRET", raising=False)
+    resp = client.post(
+        "/api/webhooks/github",
+        json={"action": "opened"},
+        headers={"X-GitHub-Event": "pull_request", "X-GitHub-Delivery": "del_000"}
+    )
+    assert resp.status_code == 500
+    assert "not configured" in resp.json()["detail"]
+
+def test_github_webhook_missing_signature_rejected(monkeypatch):
+    """With secret configured, missing X-Hub-Signature-256 returns 401."""
+    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", "test_webhook_secret_key_32_bytes_long!")
+    resp = client.post(
+        "/api/webhooks/github",
+        json={"action": "opened"},
+        headers={"X-GitHub-Event": "pull_request", "X-GitHub-Delivery": "del_001"}
+    )
+    assert resp.status_code == 401
+    assert "Missing or invalid" in resp.json()["detail"]
+
+def test_github_webhook_invalid_signature_rejected(monkeypatch):
+    """With secret configured, tampered/invalid signature returns 401."""
+    secret = "test_webhook_secret_key_32_bytes_long!"
+    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", secret)
+    body = json.dumps({"action": "opened"}).encode("utf-8")
+    tampered_header = "sha256=baddeadbeef000111222333444555666777888999aaabbbcccdddeeefff0001"
+
+    resp = client.post(
+        "/api/webhooks/github",
+        content=body,
+        headers={
+            "X-GitHub-Event": "pull_request",
+            "X-GitHub-Delivery": "del_002",
+            "X-Hub-Signature-256": tampered_header,
+            "Content-Type": "application/json"
+        }
+    )
+    assert resp.status_code == 401
+
+def test_github_webhook_missing_delivery_header(monkeypatch):
+    """With valid signature, missing X-GitHub-Delivery returns 400."""
+    secret = "test_webhook_secret_key_32_bytes_long!"
+    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", secret)
+    body = json.dumps({"action": "opened"}).encode("utf-8")
+    sig = make_github_signature(body, secret)
+
+    resp = client.post(
+        "/api/webhooks/github",
+        content=body,
+        headers={
+            "X-GitHub-Event": "pull_request",
+            "X-Hub-Signature-256": sig,
+            "Content-Type": "application/json"
+        }
+    )
+    assert resp.status_code == 400
+    assert "Missing X-GitHub-Delivery" in resp.json()["detail"]
+
+def test_github_webhook_unbound_repository_rejected(monkeypatch):
+    """Valid signature and delivery, but repository is unbound -> 403 Forbidden."""
+    secret = "test_webhook_secret_key_32_bytes_long!"
+    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", secret)
+    payload = {
+        "action": "opened",
+        "repository": {
+            "id": 9999999,
+            "full_name": "malicious-org/unbound-repo",
+            "private": False
+        },
+        "pull_request": {
+            "number": 1,
+            "title": "unbound pr",
+            "body": "attempted injection",
+            "user": {"id": 12345, "login": "external-user"},
+            "created_at": "2026-09-14T22:00:00Z"
+        }
+    }
+    body = json.dumps(payload).encode("utf-8")
+    sig = make_github_signature(body, secret)
+
+    resp = client.post(
+        "/api/webhooks/github",
+        content=body,
+        headers={
+            "X-GitHub-Event": "pull_request",
+            "X-GitHub-Delivery": "del_unbound_1",
+            "X-Hub-Signature-256": sig,
+            "Content-Type": "application/json"
+        }
+    )
+    assert resp.status_code == 403
+    assert "not bound to any organization" in resp.json()["detail"]
+
+def test_github_webhook_valid_ingestion_and_durable_persistence(monkeypatch):
     """
-    End-to-end FastAPI test of POST /api/webhooks/github.
+    Valid signed delivery for bound repository:
+    1. Ingests PR into memory_repository transactionally.
+    2. Enforces organization boundary strictly from server-owned binding.
+    3. Persists record and chunks to repository.
     """
+    secret = "test_webhook_secret_key_32_bytes_long!"
+    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", secret)
+    webhook_delivery_store.clear()
+
     payload = {
         "action": "opened",
         "repository": {
@@ -223,12 +334,17 @@ def test_github_webhook_endpoint_live():
             "html_url": "https://github.com/gdgmcet/core-platform/pull/55"
         }
     }
+    body = json.dumps(payload).encode("utf-8")
+    sig = make_github_signature(body, secret)
+    delivery_id = f"del_valid_{uuid.uuid4().hex[:12]}"
 
     resp = client.post(
-        "/api/webhooks/github?organization_id=gdg_mcet",
-        json=payload,
+        "/api/webhooks/github",
+        content=body,
         headers={
             "X-GitHub-Event": "pull_request",
+            "X-GitHub-Delivery": delivery_id,
+            "X-Hub-Signature-256": sig,
             "Content-Type": "application/json"
         }
     )
@@ -237,5 +353,128 @@ def test_github_webhook_endpoint_live():
     data = resp.json()
     assert data["status"] == "ingested"
     assert data["event_type"] == "pull_request"
+    assert data["organization_id"] == "gdg_mcet"
+    assert data["delivery_id"] == delivery_id
     assert data["records_count"] == 1
     assert data["chunks_count"] == 1
+
+    # Verify durable persistence in memory_repository
+    record_id = data["record_ids"][0]
+    rec = memory_repository.get_record(record_id)
+    assert rec is not None
+    assert rec.organization_id == "gdg_mcet"
+    assert rec.author == "usr_arjun"
+
+    chunks = memory_repository.get_chunks_for_organization("gdg_mcet")
+    matching_chunk = next((c for c in chunks if c.id in data["chunk_ids"]), None)
+    assert matching_chunk is not None
+    assert matching_chunk.source_record_id == record_id
+    assert matching_chunk.author == "usr_arjun"
+
+def test_github_webhook_replay_protection_deduplication(monkeypatch):
+    """
+    Re-submitting the exact same X-GitHub-Delivery must be detected as a duplicate.
+    Returns 200 with status="duplicate" and 0 records/chunks created.
+    """
+    secret = "test_webhook_secret_key_32_bytes_long!"
+    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", secret)
+    webhook_delivery_store.clear()
+
+    payload = {
+        "action": "opened",
+        "repository": {
+            "id": 1029384,
+            "full_name": "gdgmcet/core-platform",
+            "private": False
+        },
+        "pull_request": {
+            "number": 56,
+            "title": "feat: replay check",
+            "body": "Checking deduplication.",
+            "user": {"id": 583231, "login": "arjun-dev"},
+            "created_at": "2026-09-14T22:30:00Z",
+            "html_url": "https://github.com/gdgmcet/core-platform/pull/56"
+        }
+    }
+    body = json.dumps(payload).encode("utf-8")
+    sig = make_github_signature(body, secret)
+    delivery_id = f"del_replay_{uuid.uuid4().hex[:12]}"
+
+    # First delivery: ingested
+    resp1 = client.post(
+        "/api/webhooks/github",
+        content=body,
+        headers={
+            "X-GitHub-Event": "pull_request",
+            "X-GitHub-Delivery": delivery_id,
+            "X-Hub-Signature-256": sig,
+            "Content-Type": "application/json"
+        }
+    )
+    assert resp1.status_code == 200
+    assert resp1.json()["status"] == "ingested"
+    assert resp1.json()["records_count"] == 1
+
+    # Second delivery (replay): duplicate
+    resp2 = client.post(
+        "/api/webhooks/github",
+        content=body,
+        headers={
+            "X-GitHub-Event": "pull_request",
+            "X-GitHub-Delivery": delivery_id,
+            "X-Hub-Signature-256": sig,
+            "Content-Type": "application/json"
+        }
+    )
+    assert resp2.status_code == 200
+    data2 = resp2.json()
+    assert data2["status"] == "duplicate"
+    assert data2["records_count"] == 0
+    assert data2["chunks_count"] == 0
+    assert "already processed" in data2["message"]
+
+def test_github_webhook_caller_cannot_override_organization(monkeypatch):
+    """
+    Even if caller passes ?organization_id=foreign_tenant in URL,
+    the server-owned repository binding strictly dictates the organization (gdg_mcet).
+    """
+    secret = "test_webhook_secret_key_32_bytes_long!"
+    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", secret)
+    webhook_delivery_store.clear()
+
+    payload = {
+        "action": "opened",
+        "repository": {
+            "id": 1029384,
+            "full_name": "gdgmcet/core-platform",
+            "private": False
+        },
+        "pull_request": {
+            "number": 57,
+            "title": "feat: tenant isolation test",
+            "body": "Checking URL query param override is ignored.",
+            "user": {"id": 583231, "login": "arjun-dev"},
+            "created_at": "2026-09-14T23:00:00Z",
+            "html_url": "https://github.com/gdgmcet/core-platform/pull/57"
+        }
+    }
+    body = json.dumps(payload).encode("utf-8")
+    sig = make_github_signature(body, secret)
+    delivery_id = f"del_tenant_override_{uuid.uuid4().hex[:12]}"
+
+    resp = client.post(
+        "/api/webhooks/github?organization_id=foreign_tenant_hack",
+        content=body,
+        headers={
+            "X-GitHub-Event": "pull_request",
+            "X-GitHub-Delivery": delivery_id,
+            "X-Hub-Signature-256": sig,
+            "Content-Type": "application/json"
+        }
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ingested"
+    assert data["organization_id"] == "gdg_mcet"  # NOT foreign_tenant_hack
+    rec = memory_repository.get_record(data["record_ids"][0])
+    assert rec.organization_id == "gdg_mcet"

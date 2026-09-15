@@ -165,6 +165,9 @@ class CrossChannelIdentityService:
         links.append(link)
         self._person_links[person_key] = links
 
+        # Mirror to PostgreSQL if database connection is configured
+        self._persist_link_to_db(link)
+
         # Mirror into legacy membership_store identity mappings for compatibility
         try:
             membership_store.register_identity_mapping(
@@ -179,6 +182,46 @@ class CrossChannelIdentityService:
             pass
 
         return link
+
+    def _persist_link_to_db(self, link: ChannelAccountLink):
+        """Persists channel account link to PostgreSQL database if connected."""
+        import os
+        import json
+        db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+        if not db_url:
+            return
+        try:
+            import psycopg2
+            with psycopg2.connect(db_url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO channel_account_links (
+                            id, organization_id, person_id, channel_type, account_id,
+                            username, display_name, email, link_type, confidence,
+                            evidence, is_verified, linked_at
+                        ) VALUES (
+                            %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s, %s,
+                            %s::jsonb, %s, %s
+                        )
+                        ON CONFLICT (organization_id, channel_type, account_id) DO UPDATE SET
+                            person_id = EXCLUDED.person_id,
+                            username = EXCLUDED.username,
+                            display_name = EXCLUDED.display_name,
+                            email = EXCLUDED.email,
+                            link_type = EXCLUDED.link_type,
+                            confidence = EXCLUDED.confidence,
+                            evidence = EXCLUDED.evidence,
+                            is_verified = EXCLUDED.is_verified,
+                            linked_at = EXCLUDED.linked_at;
+                    """, (
+                        link.id, link.organization_id, link.person_id, link.channel_type.value, link.account_id,
+                        link.username, link.display_name, link.email, link.link_type.value, link.confidence,
+                        json.dumps(link.evidence), link.is_verified, link.linked_at
+                    ))
+                conn.commit()
+        except Exception as e:
+            logger.warning(f"Database identity link persistence error: {e}")
 
     def resolve_identity(
         self,
@@ -206,6 +249,43 @@ class CrossChannelIdentityService:
         str_account_id = str(account_id).strip()
         key = self._account_key(organization_id, channel_type, str_account_id)
         link = self._account_links.get(key)
+
+        if not link:
+            # Query PostgreSQL database if connected
+            import os
+            db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+            if db_url:
+                try:
+                    import psycopg2
+                    with psycopg2.connect(db_url) as conn:
+                        with conn.cursor() as cur:
+                            cur.execute("""
+                                SELECT id, organization_id, person_id, channel_type, account_id,
+                                       username, display_name, email, link_type, confidence,
+                                       evidence, is_verified, linked_at
+                                FROM channel_account_links
+                                WHERE organization_id = %s AND channel_type = %s AND account_id = %s;
+                            """, (organization_id, channel_type.value, str_account_id))
+                            row = cur.fetchone()
+                            if row:
+                                link = ChannelAccountLink(
+                                    id=row[0],
+                                    organization_id=row[1],
+                                    person_id=row[2],
+                                    channel_type=ChannelType(row[3]),
+                                    account_id=row[4],
+                                    username=row[5],
+                                    display_name=row[6],
+                                    email=row[7],
+                                    link_type=LinkVerificationType(row[8]),
+                                    confidence=row[9],
+                                    evidence=row[10] if isinstance(row[10], dict) else {},
+                                    is_verified=row[11],
+                                    linked_at=row[12]
+                                )
+                                self._account_links[key] = link
+                except Exception as e:
+                    logger.warning(f"Database identity link lookup error: {e}")
 
         if link:
             # Verified linked account found

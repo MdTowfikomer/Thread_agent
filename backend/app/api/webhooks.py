@@ -14,7 +14,9 @@ from app.core.canonical import (
     AccessContext,
     PermissionLevel
 )
-from app.channels.installation import guild_installation_store
+from app.channels.installation import guild_installation_store, github_binding_store
+from app.channels.delivery import webhook_delivery_store
+from app.memory.repository import memory_repository
 from app.core.membership import membership_store
 from app.graph.state import GraphState
 from app.graph.workflow import app_graph
@@ -268,29 +270,46 @@ async def github_webhook(request: Request):
     """
     GitHub Webhook Ingestion Endpoint.
     Handles pull_request, pull_request_review, issue_comment, issues, and push events.
-    Enforces HMAC-SHA256 signature verification, cross-channel identity resolution,
-    and stores records in the memory repository.
+    Enforces:
+    1. Unconditional HMAC-SHA256 signature verification (reject missing/invalid with 401).
+    2. Server-owned installation binding (resolves repository_id / repository_name -> organization_id; 403 if unbound).
+    3. Replay protection (deduplicates X-GitHub-Delivery).
+    4. Durable transactional persistence via memory_repository.
     """
     from app.channels.github import github_connector, verify_github_signature
 
+    # 1. Unconditional signature enforcement
+    secret = settings.github_webhook_secret
+    if not secret:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="GitHub webhook secret is not configured on server."
+        )
+
     body_bytes = await request.body()
     sig_header = request.headers.get("X-Hub-Signature-256")
-    event_type = request.headers.get("X-GitHub-Event")
+    if not sig_header or not verify_github_signature(body_bytes, sig_header, secret):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or invalid GitHub webhook HMAC-SHA256 signature."
+        )
 
+    # 2. Required Delivery ID and Event headers
+    delivery_id = request.headers.get("X-GitHub-Delivery")
+    if not delivery_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing X-GitHub-Delivery header."
+        )
+
+    event_type = request.headers.get("X-GitHub-Event")
     if not event_type:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Missing X-GitHub-Event header."
         )
 
-    secret = settings.github_webhook_secret
-    if secret:
-        if not verify_github_signature(body_bytes, sig_header, secret):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid GitHub webhook HMAC-SHA256 signature."
-            )
-
+    # 3. Parse JSON payload
     try:
         payload = json.loads(body_bytes.decode("utf-8"))
     except Exception as e:
@@ -299,21 +318,55 @@ async def github_webhook(request: Request):
             detail=f"Malformed JSON payload: {e}"
         )
 
-    org_id = request.query_params.get("organization_id", settings.DEFAULT_DOMAIN)
+    # 4. Resolve organization strictly via server-owned repository binding
+    repo = payload.get("repository", {})
+    repo_id = str(repo.get("id")) if repo.get("id") is not None else None
+    repo_name = repo.get("full_name") or repo.get("name")
 
+    org_id = github_binding_store.get_organization_for_repository(repo_id, repo_name)
+    if not org_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Repository '{repo_name}' (ID: {repo_id}) is not bound to any organization."
+        )
+
+    # 5. Replay protection (deduplication)
+    if not webhook_delivery_store.record_delivery_if_new(
+        delivery_id=delivery_id,
+        organization_id=org_id,
+        channel_type="github",
+        event_type=event_type,
+        repository_id=repo_id
+    ):
+        logger.info(f"Duplicate delivery received: {delivery_id}")
+        return {
+            "status": "duplicate",
+            "delivery_id": delivery_id,
+            "event_type": event_type,
+            "organization_id": org_id,
+            "records_count": 0,
+            "chunks_count": 0,
+            "message": f"Delivery {delivery_id} already processed."
+        }
+
+    # 6. Parse events
     try:
         events = github_connector.parse_webhook_payload(event_type, payload, org_id)
     except Exception as e:
         logger.warning(f"Error parsing GitHub event '{event_type}': {e}")
         return {"status": "skipped", "reason": str(e), "event_type": event_type}
 
+    # 7. Ingestion into memory_repository (transactional persistence)
     ingested_records = []
     ingested_chunks = []
     for ev in events:
         record, chunks, receipt = github_connector.ingest_event(ev)
-        github_connector.memory_store.add_record(record)
-        for chunk in chunks:
-            github_connector.memory_store.add_chunk(chunk)
+        ok, _ = memory_repository.persist_record_and_chunks(record, chunks)
+        if not ok:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to persist record and chunks to memory repository."
+            )
         ingested_records.append(record.id)
         ingested_chunks.extend([c.id for c in chunks])
 
@@ -321,6 +374,7 @@ async def github_webhook(request: Request):
         "status": "ingested",
         "event_type": event_type,
         "organization_id": org_id,
+        "delivery_id": delivery_id,
         "records_count": len(ingested_records),
         "chunks_count": len(ingested_chunks),
         "record_ids": ingested_records,

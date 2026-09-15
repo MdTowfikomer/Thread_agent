@@ -256,13 +256,14 @@ class GitHubConnector:
 
     def ingest_event(
         self,
-        event: GitHubEvent,
-        trust_mode: IngestionTrustMode = IngestionTrustMode.VERIFIED_CONNECTOR
+        event: GitHubEvent
     ) -> Tuple[SourceRecord, List[MemoryChunk], IngestionReceipt]:
         """
         Ingests a single normalized GitHubEvent into the SourceRecord -> MemoryChunk pipeline.
         Resolves author identity and enforces ACL/provenance rules.
+        trust_mode is strictly internal to the authenticated connector.
         """
+        trust_mode = IngestionTrustMode.VERIFIED_CONNECTOR
         # 1. Resolve author identity through CrossChannelIdentityService
         # Prohibits name-based automatic merges: only verified links with confidence >= 0.8
         # inherit internal organization permissions.

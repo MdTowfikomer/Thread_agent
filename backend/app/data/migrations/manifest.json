@@ -37,8 +37,13 @@
     },
     "007_reembedding_leases_and_deadletter": {
       "sha256": "2de48c913e7352552343986e6d7e39e480fdeebd7f503e5fb63460f2d57123b3",
-      "status": "active",
+      "status": "frozen",
       "description": "Re-embedding leases, retries, and dead-letter queue: non-blocking lease claiming, attempt tracking, failure tolerance"
+    },
+    "008_identity_persistence_and_github_bindings": {
+      "sha256": "0f5f5ba3f3dc8a4864b3a48dcf080507b4ef98afefa21ef792be57c175a0b0ce",
+      "status": "active",
+      "description": "Cross-channel identity persistence & server-owned GitHub repository bindings with webhook delivery replay protection"
     }
   }
 }

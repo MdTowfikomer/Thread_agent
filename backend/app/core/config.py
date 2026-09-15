@@ -89,6 +89,11 @@ class Settings:
                     "In production, running the Gateway bot inside FastAPI API workers causes duplicate connections; "
                     "production must run the dedicated single-worker process: python -m app.channels.run_gateway"
                 )
+            if os.getenv("THREAD_ENABLE_GITHUB_WEBHOOK", "true").lower() in ("true", "1", "yes") and not self.github_webhook_secret:
+                raise RuntimeError(
+                    "Security Startup Failure: GITHUB_WEBHOOK_SECRET is absent in production. "
+                    "A cryptographically strong webhook secret must be supplied via environment variable."
+                )
 
     
     # Configured trusted origins (no wildcard CORS!)

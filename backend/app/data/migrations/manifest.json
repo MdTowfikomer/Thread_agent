@@ -54,6 +54,11 @@
       "sha256": "ab7754ae384d180aa49c2b50fc4ccbc971c445a5dd349c583c486dd3ea8f8ca6",
       "status": "frozen",
       "description": "Seed authoritative Thread_Agent repository binding and purge legacy fixture repository bindings"
+    },
+    "011_identity_oauth_audit_and_revocation": {
+      "sha256": "4bbb72815d13692428b8f2ec3b93311db65fafc27a103fd48c6d7db2e9cf9bbb",
+      "status": "frozen",
+      "description": "GitHub OAuth account linking, revocation tracking, identity audit log, and manual link requests"
     }
   }
 }

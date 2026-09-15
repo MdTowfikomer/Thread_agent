@@ -46,7 +46,42 @@ class ChannelAccountLink(BaseModel):
     confidence: float = 0.0
     evidence: Dict[str, Any] = Field(default_factory=dict)
     is_verified: bool = False
+    is_active: bool = True
+    revoked_at: Optional[datetime] = None
+    revoked_by: Optional[str] = None
     linked_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class IdentityAuditEvent(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    organization_id: str
+    person_id: str
+    channel_type: ChannelType
+    account_id: str
+    event_type: str  # oauth_linked, manual_requested, manual_approved, manual_rejected, link_revoked
+    actor_person_id: str
+    evidence: Dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class ManualLinkRequestStatus(str, Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+class ManualLinkRequest(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    organization_id: str
+    person_id: str
+    channel_type: ChannelType = ChannelType.GITHUB
+    account_id: str
+    username: Optional[str] = None
+    reason: str
+    evidence_notes: Optional[str] = None
+    status: ManualLinkRequestStatus = ManualLinkRequestStatus.PENDING
+    requested_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    reviewed_by: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    review_notes: Optional[str] = None
+
 
 # Identity Mapping for Channel Users (backwards compatible)
 class IdentityMapping(BaseModel):

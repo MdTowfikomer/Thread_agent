@@ -13,6 +13,7 @@ from app.channels.gateway import discord_gateway_bot
 from app.api.chat import router as chat_router
 from app.api.imports import router as imports_router
 from app.api.webhooks import router as webhooks_router
+from app.api.identity import router as identity_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -54,6 +55,8 @@ app.add_middleware(
 app.include_router(chat_router, prefix=settings.API_PREFIX)
 app.include_router(imports_router, prefix=settings.API_PREFIX)
 app.include_router(webhooks_router, prefix=settings.API_PREFIX)
+app.include_router(identity_router, prefix=settings.API_PREFIX)
+
 
 @app.get("/health")
 def health_check():

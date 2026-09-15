@@ -128,4 +128,17 @@ class Settings:
     def github_webhook_secret(self) -> str:
         return os.getenv("GITHUB_WEBHOOK_SECRET", "").strip()
 
+    # GitHub OAuth Application Credentials
+    @property
+    def github_client_id(self) -> str:
+        return os.getenv("GITHUB_CLIENT_ID", "").strip()
+
+    @property
+    def github_client_secret(self) -> str:
+        return os.getenv("GITHUB_CLIENT_SECRET", "").strip()
+
+    @property
+    def github_oauth_redirect_uri(self) -> str:
+        return os.getenv("GITHUB_OAUTH_REDIRECT_URI", "").strip()
+
 settings = Settings()

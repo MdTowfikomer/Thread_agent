@@ -1,0 +1,15 @@
+name: Keep Render Service Awake
+
+on:
+  schedule:
+    # Run every 10 minutes (cron syntax)
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Render Backend Health Check
+        run: |
+          curl -f -s https://thread-agent.onrender.com/health || echo "Ping request finished"

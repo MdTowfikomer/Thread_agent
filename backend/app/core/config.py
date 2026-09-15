@@ -57,7 +57,8 @@ class Settings:
     def is_render_free_demo(self) -> bool:
         mode = os.getenv("THREAD_DEPLOYMENT_MODE", "").strip().lower()
         app_env = os.getenv("APP_ENV", "").strip().lower()
-        return mode == "render_free_demo" or app_env == "render_free_demo"
+        is_render = os.getenv("RENDER", "").strip().lower() == "true"
+        return mode == "render_free_demo" or app_env == "render_free_demo" or is_render
 
     # Default THREAD_JWT_SECRET has been strictly removed
     @property

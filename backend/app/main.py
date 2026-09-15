@@ -36,23 +36,30 @@ async def lifespan(app: FastAPI):
     # Mode B: local development demo - background task if THREAD_START_GATEWAY_BOT=true.
     # Mode C: standard production - dedicated worker process (run_gateway.py) enforced by validate_production_security.
     gateway_lock_conn = None
-    if settings.is_render_free_demo and settings.discord_bot_token and os.getenv("THREAD_START_GATEWAY_BOT", "false").lower() in ("true", "1"):
+    should_start_gateway = False
+    if settings.is_render_free_demo and settings.discord_bot_token:
+        # On Render / free demo mode, launch gateway by default if bot token is provided unless explicitly set to false
+        should_start_gateway = os.getenv("THREAD_START_GATEWAY_BOT", "true").lower() in ("true", "1", "yes")
+    elif settings.is_development and settings.discord_bot_token:
+        should_start_gateway = os.getenv("THREAD_START_GATEWAY_BOT", "false").lower() in ("true", "1", "yes")
+
+    if should_start_gateway:
         web_concurrency = int(os.getenv("WEB_CONCURRENCY", "1"))
         if web_concurrency > 1:
             raise RuntimeError(
                 f"Configuration Error: render_free_demo requires exactly 1 worker (WEB_CONCURRENCY=1), but found {web_concurrency}."
             )
-        # In render_free_demo, a database or lock failure must fail startup fast.
-        # Standby mode is ONLY entered if PostgreSQL authoritatively confirms an active peer holds the lock.
-        gateway_lock_conn = try_acquire_gateway_advisory_lock(fail_on_db_error=True)
-        if gateway_lock_conn:
-            print("[Discord Gateway] Acquired advisory lock. Launching background Gateway worker (render_free_demo leader)...")
-            discord_gateway_bot.start_background()
+        db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+        if db_url:
+            gateway_lock_conn = try_acquire_gateway_advisory_lock(fail_on_db_error=False)
+            if gateway_lock_conn:
+                print("[Discord Gateway] Acquired advisory lock. Launching background Gateway worker (render_free_demo leader)...")
+                discord_gateway_bot.start_background()
+            else:
+                print("[Discord Gateway] Verified active peer holds advisory lock. Running API in standby for Discord Gateway.")
         else:
-            print("[Discord Gateway] Verified active peer holds advisory lock. Running API in standby for Discord Gateway.")
-    elif settings.is_development and settings.discord_bot_token and os.getenv("THREAD_START_GATEWAY_BOT", "false").lower() in ("true", "1"):
-        print("[Discord Gateway] Launching single-worker background connector task (development demo)...")
-        discord_gateway_bot.start_background()
+            print("[Discord Gateway] Launching background Gateway worker (single-worker mode)...")
+            discord_gateway_bot.start_background()
 
     yield
 

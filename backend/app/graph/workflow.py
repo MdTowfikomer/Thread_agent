@@ -1,12 +1,18 @@
+import os
 from datetime import datetime, timezone
-from typing import Dict, Any
+from typing import Dict, Any, Tuple, Optional
 from langgraph.graph import StateGraph, END
 from app.graph.state import GraphState
 from app.core.organizations import get_workspace, get_role_agent
 from app.core.config import settings
 from app.memory.retrieval import retrieval_service, derive_access_context
 
-import os
+from app.tools.events import event_assistant
+from app.tools.resources import resource_assistant
+from app.tools.summarizer import summarizer_assistant
+from app.tools.github_helper import github_helper
+from app.tools.account_link import account_link_tool
+
 
 def get_llm():
     """Return LangChain LLM with fallback."""
@@ -38,36 +44,119 @@ def get_llm():
 
     return None
 
+
+def classify_intent_and_routing(query: str, ws) -> Tuple[str, Optional[str], Optional[str], Any]:
+    """
+    Classify incoming inquiry into:
+      - 'TOOL_EXECUTION': Community utilities (!events, !faq, !summary, !github, !link)
+      - 'GENERAL_KNOWLEDGE': Conversational greetings, general software questions, direct LLM answers
+      - 'ORGANIZATIONAL_FACTS': Inquiries requiring authoritative vector retrieval against verified team records
+    """
+    q_stripped = query.strip()
+    q_lower = q_stripped.lower()
+
+    # 1. Explicit command triggers
+    if q_lower.startswith("!events") or q_lower.startswith("!event"):
+        role = next((r for r in ws.roles if r.id == "organizer_lead"), ws.roles[0])
+        return "TOOL_EXECUTION", "events", q_stripped[7:].strip(), role
+    if q_lower.startswith("!faq") or q_lower.startswith("!resources") or q_lower.startswith("!resource"):
+        role = next((r for r in ws.roles if r.id == "community_lead"), ws.roles[0])
+        arg = q_stripped.split(maxsplit=1)[1] if len(q_stripped.split()) > 1 else ""
+        return "TOOL_EXECUTION", "resources", arg.strip(), role
+    if q_lower.startswith("!summary") or q_lower.startswith("!summarize"):
+        return "TOOL_EXECUTION", "summary", "", ws.roles[0]
+    if q_lower.startswith("!github") or q_lower.startswith("!repo"):
+        role = next((r for r in ws.roles if r.id == "tech_lead"), ws.roles[0])
+        return "TOOL_EXECUTION", "github", "", role
+    if q_lower.startswith("!link"):
+        role = next((r for r in ws.roles if r.id == "community_lead"), ws.roles[0])
+        arg = q_stripped[5:].strip()
+        return "TOOL_EXECUTION", "link", arg, role
+
+    # 2. Natural language tool queries
+    if any(k in q_lower for k in ("upcoming event", "next event", "upcoming workshop", "when is the hackathon", "event schedule", "events list")):
+        role = next((r for r in ws.roles if r.id == "organizer_lead"), ws.roles[0])
+        return "TOOL_EXECUTION", "events", "", role
+    if any(k in q_lower for k in ("github repo", "github link", "how to contribute to github", "source code repo", "official repository")):
+        role = next((r for r in ws.roles if r.id == "tech_lead"), ws.roles[0])
+        return "TOOL_EXECUTION", "github", "", role
+    if any(k in q_lower for k in ("summarize this channel", "summarize our discussion", "recap discussion", "summarize channel")):
+        return "TOOL_EXECUTION", "summary", "", ws.roles[0]
+    if any(k in q_lower for k in ("community guidelines", "discord rules", "code of conduct", "how do i link")):
+        role = next((r for r in ws.roles if r.id == "community_lead"), ws.roles[0])
+        return "TOOL_EXECUTION", "resources", q_lower, role
+
+    # 3. Match best role by expertise keywords
+    best_role = ws.roles[0]
+    matched_expertise = False
+    for role in ws.roles:
+        for tag in role.expertise:
+            if tag.lower() in q_lower:
+                best_role = role
+                matched_expertise = True
+                break
+        if matched_expertise:
+            break
+
+    # 4. Check for conversational greetings / small talk
+    greetings = ("hello", "hi", "hey", "good morning", "good evening", "good afternoon", "greetings")
+    conversational_phrases = ("how are you", "who are you", "what can you do", "help me", "can you help", "tell me about yourself")
+    if (
+        any(q_lower.startswith(g) for g in greetings)
+        or any(p in q_lower for p in conversational_phrases)
+        or q_lower in greetings
+    ):
+        return "GENERAL_KNOWLEDGE", None, None, best_role
+
+    # 5. Check if query is an organizational search vs general knowledge
+    org_indicators = (
+        "gdg", "mcet", "devfest", "budget", "sponsor", "sponsorship", "meeting", "minutes",
+        "decision", "reimbursement", "vendor", "venue", "internal", "quarantine", "provenance",
+        "policy", "attendance", "proposal", "retro", "receipt", "audit", "secret", "private",
+        "mariana", "submarine", "protocol", "record", "records"
+    )
+    if any(ind in q_lower for ind in org_indicators) or matched_expertise:
+        return "ORGANIZATIONAL_FACTS", None, None, best_role
+
+    # General technical question or conversational programming guidance
+    general_question_starters = ("what is", "how do", "how does", "explain", "why does", "tell me about", "can you explain", "write a")
+    if any(q_lower.startswith(s) for s in general_question_starters):
+        return "GENERAL_KNOWLEDGE", None, None, best_role
+
+    return "ORGANIZATIONAL_FACTS", None, None, best_role
+
+
 # --- NODE 1: TRIAGE ROUTER ---
 def triage_node(state: GraphState) -> Dict[str, Any]:
     ws = get_workspace(state.organization_id)
-    query_lower = state.query.lower()
-    
-    best_role = ws.roles[0]
-    for role in ws.roles:
-        for tag in role.expertise:
-            if tag.lower() in query_lower:
-                best_role = role
-                break
+    intent_category, tool_name, tool_args, best_role = classify_intent_and_routing(state.query, ws)
 
-    intent = f"Identified intent: topic concerning {', '.join(best_role.expertise[:3])}"
-    
+    intent_desc = f"Identified intent: {intent_category}"
+    if tool_name:
+        intent_desc += f" (Tool: {tool_name})"
+    else:
+        intent_desc += f" concerning {', '.join(best_role.expertise[:3])}"
+
     new_trace = list(state.trace)
     new_trace.append({
         "step": "triage_router",
         "agent_id": "triage_router",
         "agent_name": "Triage Router",
         "status": "completed",
-        "message": f"Routed query to {best_role.name} ({best_role.role}) based on role responsibility.",
+        "message": f"Routed query to {best_role.name} ({best_role.role}) under {intent_category}.",
         "timestamp": datetime.now(timezone.utc).isoformat()
     })
 
     return {
-        "triage_intent": intent,
+        "intent_category": intent_category,
+        "tool_name": tool_name,
+        "tool_args": tool_args,
+        "triage_intent": intent_desc,
         "target_role_id": best_role.id,
         "target_role_name": f"{best_role.name} ({best_role.role})",
         "trace": new_trace
     }
+
 
 # --- NODE 2: RETRIEVAL SERVICE (AGENTS NEVER ACCESS RAW MEMORY DIRECTLY) ---
 def retrieval_node(state: GraphState) -> Dict[str, Any]:
@@ -78,6 +167,23 @@ def retrieval_node(state: GraphState) -> Dict[str, Any]:
             organization_id=state.organization_id,
             role_id="community"
         )
+
+    # Bypass dense vector retrieval for direct tools and conversational knowledge
+    if state.intent_category in ("TOOL_EXECUTION", "GENERAL_KNOWLEDGE"):
+        new_trace = list(state.trace)
+        new_trace.append({
+            "step": "retrieval_service",
+            "agent_id": "retrieval_service",
+            "agent_name": "Deterministic Retrieval Service",
+            "status": "completed",
+            "message": f"Direct response route ({state.intent_category}): Vector retrieval bypassed.",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+        return {
+            "access_context": ctx,
+            "evidence_pack": None,
+            "trace": new_trace
+        }
 
     # Retrieval service evaluates ACL strictly before candidate scoring
     evidence_pack = retrieval_service.retrieve(
@@ -107,15 +213,26 @@ def retrieval_node(state: GraphState) -> Dict[str, Any]:
         "trace": new_trace
     }
 
+
 # --- NODE 3: ROLE AGENT VERIFICATION ---
 def role_agent_node(state: GraphState) -> Dict[str, Any]:
-    evidence = state.evidence_pack
     role = get_role_agent(state.organization_id, state.target_role_id)
     role_title = role.role if role else "Role Agent"
     role_name = role.name if role else "Agent"
-
     new_trace = list(state.trace)
-    
+
+    if state.intent_category in ("TOOL_EXECUTION", "GENERAL_KNOWLEDGE"):
+        new_trace.append({
+            "step": "role_agent_verification",
+            "agent_id": state.target_role_id or "role_agent",
+            "agent_name": f"{role_name} ({role_title})",
+            "status": "completed",
+            "message": f"Verified request under {state.intent_category}. Forwarding to direct execution.",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+        return {"trace": new_trace}
+
+    evidence = state.evidence_pack
     if not evidence or not evidence.sufficient_evidence:
         new_trace.append({
             "step": "role_agent_verification",
@@ -139,6 +256,7 @@ def role_agent_node(state: GraphState) -> Dict[str, Any]:
         "trace": new_trace
     }
 
+
 # --- NODE 4: SYNTHESIS AGENT (STRICT GROUNDING - NO BLUFFING) ---
 def synthesis_node(state: GraphState) -> Dict[str, Any]:
     ws = get_workspace(state.organization_id)
@@ -147,6 +265,108 @@ def synthesis_node(state: GraphState) -> Dict[str, Any]:
     role_title = role.role if role else "Lead"
     role_style = role.style if role else "Clear, professional, and precise."
 
+    # 1. TOOL EXECUTION BRANCH
+    if state.intent_category == "TOOL_EXECUTION":
+        final_answer = ""
+        tool = state.tool_name or ""
+        if tool == "events":
+            events = event_assistant.list_upcoming_events(state.organization_id)
+            final_answer = event_assistant.format_events_response(events)
+        elif tool == "resources":
+            resources = resource_assistant.search_resources(state.tool_args or "", state.organization_id)
+            final_answer = resource_assistant.format_resources_response(resources)
+        elif tool == "summary":
+            final_answer = summarizer_assistant.summarize_conversation(state.session_key)
+        elif tool == "github":
+            repo = github_helper.get_bound_repository(state.organization_id)
+            final_answer = github_helper.format_github_response(repo)
+        elif tool == "link":
+            arg = (state.tool_args or "").strip()
+            plat = state.session_key.split(":")[0] if ":" in state.session_key else "community"
+            user_id = state.access_context.user_id if state.access_context else "anon"
+            if arg.startswith("LINK-"):
+                _, final_answer = account_link_tool.redeem_link_token(
+                    arg, target_platform=plat, target_account_id=user_id, target_username=user_id, org_id=state.organization_id
+                )
+            else:
+                tok = account_link_tool.generate_link_token(
+                    plat, user_id, user_id, user_id, org_id=state.organization_id
+                )
+                final_answer = (
+                    f"🔗 **Cross-Platform Account Linking**\n\n"
+                    f"Here is your temporary linking token: `{tok}` *(valid for 30 minutes)*.\n\n"
+                    f"**Next Steps:**\n"
+                    f"1. Open Slack, Telegram, or Discord (wherever your other account is).\n"
+                    f"2. Send `!link {tok}` to Thread Agent.\n"
+                    f"3. Your accounts, conversation history, and roles will be synchronized across platforms!"
+                )
+        else:
+            final_answer = f"Tool '{tool}' executed."
+
+        new_trace = list(state.trace)
+        new_trace.append({
+            "step": "synthesis",
+            "agent_id": "synthesis_agent",
+            "agent_name": f"{role_name} ({role_title})",
+            "status": "completed",
+            "message": f"Executed tool '{tool}' successfully.",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+        return {
+            "final_answer": final_answer,
+            "trace": new_trace
+        }
+
+    # 2. GENERAL KNOWLEDGE / CONVERSATION BRANCH
+    if state.intent_category == "GENERAL_KNOWLEDGE":
+        llm = get_llm()
+        if llm:
+            history_str = ""
+            if state.chat_history:
+                history_str = "Recent Conversation History:\n" + "\n".join([
+                    f"{h.get('role', 'user').capitalize()}: {h.get('content', '')}" for h in state.chat_history[-6:]
+                ]) + "\n\n"
+
+            system_prompt = f"""You are {role_name}, the {role_title} at {ws.name}.
+Persona Style: {role_style}
+
+You are conversing with a community member in an open developer channel.
+Be welcoming, intelligent, concise, and helpful.
+Answer questions directly, politely, and accurately.
+
+{history_str}User Message: {state.query}
+"""
+            try:
+                res = llm.invoke(system_prompt)
+                answer = res.content if hasattr(res, "content") else str(res)
+            except Exception:
+                answer = (
+                    f"Hello! I am **{role_name}**, {role_title} at **{ws.name}**.\n\n"
+                    f"I'm here to assist you with questions about our developer community, upcoming events, workshops, and verified team records. "
+                    f"Feel free to ask me anything or type `!events`, `!faq`, `!github`, or `!summary`!"
+                )
+        else:
+            answer = (
+                f"Hello! I am **{role_name}**, {role_title} at **{ws.name}**.\n\n"
+                f"I'm here to assist you with questions about our developer community, upcoming events, workshops, and verified team records. "
+                f"Feel free to ask me anything or type `!events`, `!faq`, `!github`, or `!summary`!"
+            )
+
+        new_trace = list(state.trace)
+        new_trace.append({
+            "step": "synthesis",
+            "agent_id": "synthesis_agent",
+            "agent_name": f"{role_name} ({role_title})",
+            "status": "completed",
+            "message": "Synthesized direct conversational response.",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+        return {
+            "final_answer": answer,
+            "trace": new_trace
+        }
+
+    # 3. ORGANIZATIONAL FACTS BRANCH (STRICT GROUNDING - NO BLUFFING)
     evidence = state.evidence_pack
 
     # REQUIREMENT 5: If no sufficient evidence exists, synthesis MUST say evidence is insufficient.
@@ -216,6 +436,7 @@ User Query: {state.query}
         "trace": new_trace
     }
 
+
 def _fallback_synthesis(role_name: str, role_title: str, evidence) -> str:
     sources_summary = "\n".join([
         f"- **{c.title or 'Record'}** (via {c.source.value.capitalize()} by {c.author}): {c.snippet}"
@@ -228,6 +449,7 @@ def _fallback_synthesis(role_name: str, role_title: str, evidence) -> str:
         f"{sources_summary}\n\n"
         f"*(Confidence: {int(evidence.confidence_score * 100)}% | Receipt ID: `{evidence.receipt.receipt_id}`)*"
     )
+
 
 # Build & Compile Graph
 workflow = StateGraph(GraphState)

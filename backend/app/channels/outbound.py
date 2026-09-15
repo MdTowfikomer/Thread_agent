@@ -14,6 +14,7 @@ from app.core.canonical import ChannelType, PermissionLevel
 from app.core.config import settings
 from app.graph.state import GraphState
 from app.graph.workflow import app_graph
+from app.memory.conversation import conversation_store
 
 
 class OutboundProviderError(RuntimeError):
@@ -233,36 +234,61 @@ class ChannelMessageDeliveryService:
     def send_message(self, principal: AuthenticatedPrincipal, platform: ChannelType, destination_id: str, query: str, idempotency_key: Optional[str] = None):
         if not query.strip():
             raise ValueError("Query cannot be empty.")
-        result = app_graph.invoke(GraphState(query=query, organization_id=principal.organization_id, access_context=principal.access_context))
-        evidence = result.get("evidence_pack")
-        if not evidence or not evidence.sufficient_evidence or not evidence.citations:
-            return {"status": "insufficient_evidence", "answer": "Insufficient evidence.", "retrieval_receipt_id": evidence.receipt.receipt_id if evidence else None, "citations": []}
+
+        session_key = conversation_store.format_session_key(platform.value, destination_id, principal.user_id)
+        chat_history = conversation_store.get_recent_turns(session_key, limit=10)
+
+        result = app_graph.invoke(GraphState(
+            query=query,
+            organization_id=principal.organization_id,
+            access_context=principal.access_context,
+            session_key=session_key,
+            chat_history=chat_history
+        ))
+
+        intent = result.get("intent_category", "ORGANIZATIONAL_FACTS") if isinstance(result, dict) else getattr(result, "intent_category", "ORGANIZATIONAL_FACTS")
+        final_answer = result.get("final_answer") if isinstance(result, dict) else getattr(result, "final_answer", "")
+        evidence = result.get("evidence_pack") if isinstance(result, dict) else getattr(result, "evidence_pack", None)
+
+        if intent == "ORGANIZATIONAL_FACTS":
+            if not evidence or not getattr(evidence, "sufficient_evidence", False) or not getattr(evidence, "citations", []):
+                receipt_id = getattr(evidence.receipt, "receipt_id", None) if (evidence and getattr(evidence, "receipt", None)) else None
+                conversation_store.record_turn(session_key, platform.value, principal.organization_id, principal.user_id, "user", query)
+                conversation_store.record_turn(session_key, platform.value, principal.organization_id, principal.user_id, "assistant", final_answer or "Insufficient evidence.")
+                return {"status": "insufficient_evidence", "answer": final_answer or "Insufficient evidence.", "retrieval_receipt_id": receipt_id, "citations": []}
+
         destination = self._resolve_destination(platform, destination_id, principal.organization_id)
 
-        # Enforce destination ACL: check destination channel policy against citation permissions
-        guild_id = destination.get("guild_id") or destination.get("team_id")
-        dest_policy = channel_policy_store.get_policy(
-            principal.organization_id, platform, destination_id, guild_id
-        )
-        dest_scope = dest_policy.permission_scope if dest_policy and dest_policy.is_active else PermissionLevel.PUBLIC_COMMUNITY
-        for c in evidence.citations:
-            if c.permission == PermissionLevel.PENDING_REVIEW:
-                raise PermissionError("Evidence with PENDING_REVIEW permission is never sendable.")
-            if dest_scope == PermissionLevel.PUBLIC_COMMUNITY and c.permission != PermissionLevel.PUBLIC_COMMUNITY:
-                raise PermissionError(
-                    f"Destination channel '{destination_id}' is PUBLIC_COMMUNITY but evidence contains '{c.permission.value}' citations."
-                )
+        if intent == "ORGANIZATIONAL_FACTS" and evidence and getattr(evidence, "citations", []):
+            # Enforce destination ACL: check destination channel policy against citation permissions
+            guild_id = destination.get("guild_id") or destination.get("team_id")
+            dest_policy = channel_policy_store.get_policy(
+                principal.organization_id, platform, destination_id, guild_id
+            )
+            dest_scope = dest_policy.permission_scope if dest_policy and dest_policy.is_active else PermissionLevel.PUBLIC_COMMUNITY
+            for c in evidence.citations:
+                if c.permission == PermissionLevel.PENDING_REVIEW:
+                    raise PermissionError("Evidence with PENDING_REVIEW permission is never sendable.")
+                if dest_scope == PermissionLevel.PUBLIC_COMMUNITY and c.permission != PermissionLevel.PUBLIC_COMMUNITY:
+                    raise PermissionError(
+                        f"Destination channel '{destination_id}' is PUBLIC_COMMUNITY but evidence contains '{c.permission.value}' citations."
+                    )
+            citations = [{"item_id": c.item_id, "source": c.source.value, "source_uri": c.source_uri, "permission": c.permission.value, "relevance_score": c.relevance_score} for c in evidence.citations]
+            receipt_id = getattr(evidence.receipt, "receipt_id", "rcpt-direct") if getattr(evidence, "receipt", None) else "rcpt-direct"
+            raw_key = idempotency_key or f"receipt_{receipt_id}"
+        else:
+            citations = []
+            receipt_id = "direct_synthesis"
+            raw_key = idempotency_key or hashlib.sha256(f"{principal.user_id}:{query}:{datetime.now(timezone.utc).isoformat()}".encode()).hexdigest()
 
         # Scope user-supplied idempotency key by organization, initiating user, platform, and destination
-        raw_key = idempotency_key or f"receipt_{evidence.receipt.receipt_id}"
         key = hashlib.sha256(
             f"{principal.organization_id}:{principal.user_id}:{platform.value}:{destination_id}:{raw_key}".encode()
         ).hexdigest()
 
-        citations = [{"item_id": c.item_id, "source": c.source.value, "source_uri": c.source_uri, "permission": c.permission.value, "relevance_score": c.relevance_score} for c in evidence.citations]
         claimed, existing = self.audit_store.claim(key, {
             "platform": platform.value, "organization_id": principal.organization_id, "destination": destination,
-            "initiating_user_id": principal.user_id, "retrieval_receipt_id": evidence.receipt.receipt_id,
+            "initiating_user_id": principal.user_id, "retrieval_receipt_id": receipt_id,
             "source_citations": citations, "timestamp": datetime.now(timezone.utc),
             "raw_idempotency_key": raw_key,
         })
@@ -277,15 +303,26 @@ class ChannelMessageDeliveryService:
                 }
             return {"status": "duplicate", "delivery_id": existing["id"], "provider_response_id": existing.get("provider_response_id")}
         try:
-            provider_id = self.adapters[platform].send(destination, result.get("final_answer") or "Insufficient evidence.", key)
+            outbound_text = final_answer or "No content available."
+            provider_id = self.adapters[platform].send(destination, outbound_text, key)
             self.audit_store.finish(key, "sent", provider_id)
+            conversation_store.record_turn(session_key, platform.value, principal.organization_id, principal.user_id, "user", query)
+            conversation_store.record_turn(session_key, platform.value, principal.organization_id, principal.user_id, "assistant", outbound_text)
         except OutboundTimeoutError:
             self.audit_store.finish(key, "unknown", None)
             raise
         except Exception:
             self.audit_store.finish(key, "failed", None)
             raise
-        return {"status": "sent", "delivery_id": key, "provider_response_id": provider_id, "retrieval_receipt_id": evidence.receipt.receipt_id, "citations": citations, "destination": destination}
+        return {
+            "status": "sent",
+            "delivery_id": key,
+            "provider_response_id": provider_id,
+            "retrieval_receipt_id": receipt_id,
+            "citations": citations,
+            "destination": destination,
+            "final_answer": outbound_text
+        }
 
 
 outbound_audit_store = OutboundAuditStore()

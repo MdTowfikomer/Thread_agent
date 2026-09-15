@@ -117,6 +117,20 @@ class CrossChannelIdentityService:
             is_bootstrap=True
         )
 
+        # Towfik Omer: Lead Organizer Discord
+        self.link_account(
+            organization_id="gdg_mcet",
+            person_id="usr_towfik",
+            channel_type=ChannelType.DISCORD,
+            account_id="1203465558436225056",
+            username="towfikomer",
+            display_name="Towfik Omer",
+            link_type=LinkVerificationType.ORGANIZER_MANUAL,
+            confidence=1.0,
+            evidence={"verified_by": "system_bootstrap"},
+            is_bootstrap=True
+        )
+
     def _account_key(self, organization_id: str, channel_type: ChannelType, account_id: str) -> str:
         return f"{organization_id}:{channel_type.value}:{str(account_id).strip()}"
 

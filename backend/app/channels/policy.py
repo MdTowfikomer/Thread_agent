@@ -114,6 +114,40 @@ class ChannelPolicyStore:
             permission_scope=PermissionLevel.PUBLIC_COMMUNITY
         )
 
+        # Real production GDG MCET Discord server channel policies (guild 1549162455874412667)
+        self.register_policy(
+            organization_id="gdg_mcet",
+            channel_type=ChannelType.DISCORD,
+            guild_id="1549162455874412667",
+            channel_id="1549434796772560967",
+            channel_name="core-team",
+            permission_scope=PermissionLevel.INTERNAL_CORE
+        )
+        self.register_policy(
+            organization_id="gdg_mcet",
+            channel_type=ChannelType.DISCORD,
+            guild_id="1549162455874412667",
+            channel_id="1549434872584474735",
+            channel_name="organizers",
+            permission_scope=PermissionLevel.INTERNAL_CORE
+        )
+        self.register_policy(
+            organization_id="gdg_mcet",
+            channel_type=ChannelType.DISCORD,
+            guild_id="1549162455874412667",
+            channel_id="1549162457359065110",
+            channel_name="general",
+            permission_scope=PermissionLevel.PUBLIC_COMMUNITY
+        )
+        self.register_policy(
+            organization_id="gdg_mcet",
+            channel_type=ChannelType.DISCORD,
+            guild_id="1549162455874412667",
+            channel_id="1549434693735157820",
+            channel_name="public_community",
+            permission_scope=PermissionLevel.PUBLIC_COMMUNITY
+        )
+
     def clear(self):
         self._policies.clear()
         self._init_default_policies()

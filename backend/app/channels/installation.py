@@ -28,6 +28,16 @@ class GuildInstallationStore:
             organization_id="gdg_mcet",
             guild_name="GDG MCET Discord"
         )
+        try:
+            from app.core.config import settings
+            for gid in settings.discord_allowed_guild_ids:
+                self.register_installation(
+                    guild_id=gid,
+                    organization_id="gdg_mcet",
+                    guild_name=f"Discord Guild {gid}"
+                )
+        except Exception:
+            pass
 
     def register_installation(
         self,

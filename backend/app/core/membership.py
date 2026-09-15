@@ -97,6 +97,18 @@ class MembershipStore:
             is_active=True
         )
 
+        # 6. Real Lead Organizer: Towfik Omer
+        self.register_member(
+            user_id="usr_towfik",
+            name="Towfik Omer",
+            email="towfik@gdgmcet.org",
+            organization_id="gdg_mcet",
+            role_id="organizer_lead",
+            role_name="Lead Organizer",
+            permission=PermissionLevel.INTERNAL_CORE,
+            is_active=True
+        )
+
         # Default Discord identity mapping for Arjun
         self.register_identity_mapping(
             organization_id="gdg_mcet",
@@ -104,6 +116,15 @@ class MembershipStore:
             external_user_id="discord_arjun_101",
             internal_user_id="usr_arjun",
             external_username="arjun_gdg"
+        )
+
+        # Real Discord identity mapping for Towfik Omer
+        self.register_identity_mapping(
+            organization_id="gdg_mcet",
+            channel_type=ChannelType.DISCORD,
+            external_user_id="1203465558436225056",
+            internal_user_id="usr_towfik",
+            external_username="towfikomer"
         )
 
     def register_identity_mapping(

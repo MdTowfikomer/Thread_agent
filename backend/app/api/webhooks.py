@@ -601,6 +601,139 @@ async def handle_telegram_webhook(request: Request):
             detail=f"Telegram ingestion error: {e}"
         )
 
+    # 8. Interactive Mention & Direct Interaction Handling
+    raw_text = str(text).strip()
+    chat_type = str(chat.get("type") or "group")
+    is_private = chat_type == "private"
+
+    entities = message.get("entities") or []
+    is_bot_mention_entity = any(
+        e.get("type") == "bot_command"
+        or (
+            e.get("type") == "mention"
+            and any(k in raw_text[e["offset"]:e["offset"] + e["length"]].lower() for k in ("thread", "bot"))
+        )
+        for e in entities
+        if "offset" in e and "length" in e
+    )
+    has_text_mention = bool(
+        re.search(r"@GDGCThreadBot\b", raw_text, re.IGNORECASE)
+        or re.search(r"@\w*thread\w*bot\b", raw_text, re.IGNORECASE)
+        or re.search(r"@ThreadAgent\b", raw_text, re.IGNORECASE)
+    )
+    is_reply_to_bot = bool(
+        message.get("reply_to_message", {}).get("from", {}).get("is_bot") is True
+    )
+
+    should_reply = is_private or is_bot_mention_entity or has_text_mention or is_reply_to_bot
+
+    if should_reply:
+        reply_delivery_id = f"tg_reply_{chat_id}_{event.message_id}"
+        can_reply, reply_status, reply_msg = webhook_delivery_store.claim_delivery(
+            delivery_id=reply_delivery_id,
+            organization_id=org_id,
+            channel_type="telegram",
+            event_type="mention_reply",
+            repository_id=chat_id,
+        )
+
+        if can_reply:
+            try:
+                from app.channels.policy import channel_policy_store
+                from app.channels.outbound import TelegramOutboundAdapter
+
+                clean_query = re.sub(r"@\w*thread\w*bot\b", "", raw_text, flags=re.IGNORECASE)
+                clean_query = re.sub(r"@ThreadAgent\b", "", clean_query, flags=re.IGNORECASE)
+                clean_query = re.sub(r"^/\w+\s*", "", clean_query).strip()
+
+                from_user = message.get("from") or {}
+                user_id = str(from_user.get("id") or "telegram_anon")
+                username = from_user.get("username") or user_id
+                first_name = from_user.get("first_name") or ""
+                last_name = from_user.get("last_name") or ""
+                display_name = f"{first_name} {last_name}".strip() or username
+
+                adapter = TelegramOutboundAdapter()
+
+                if not clean_query:
+                    adapter.send(
+                        {"chat_id": chat_id},
+                        "Hello! I am Thread Agent for GDG MCET. Ask me anything about our team, events, or verified records!",
+                        reply_delivery_id,
+                    )
+                    webhook_delivery_store.mark_completed(reply_delivery_id)
+                    return {
+                        "status": "responded",
+                        "channel": "telegram",
+                        "organization_id": org_id,
+                        "delivery_id": delivery_id,
+                        "reply_delivery_id": reply_delivery_id,
+                    }
+
+                link = identity_service.resolve_identity(
+                    organization_id=org_id,
+                    channel_type=ChannelType.TELEGRAM,
+                    account_id=user_id,
+                    username=username,
+                    display_name=display_name,
+                )
+                access_context = membership_store.derive_access_context(
+                    user_id=link.person_id,
+                    organization_id=org_id,
+                )
+                principal = AuthenticatedPrincipal(
+                    user_id=link.person_id,
+                    organization_id=org_id,
+                    access_context=access_context,
+                )
+
+                policy = channel_policy_store.get_policy(org_id, ChannelType.TELEGRAM, chat_id)
+                if not policy or not policy.is_active:
+                    channel_policy_store.register_policy(
+                        organization_id=org_id,
+                        channel_type=ChannelType.TELEGRAM,
+                        channel_id=chat_id,
+                        permission_scope=PermissionLevel.PUBLIC_COMMUNITY,
+                        channel_name=chat.get("title") or chat.get("username") or "Telegram Chat",
+                    )
+
+                send_result = channel_message_delivery_service.send_message(
+                    principal=principal,
+                    platform=ChannelType.TELEGRAM,
+                    destination_id=chat_id,
+                    query=clean_query,
+                    idempotency_key=reply_delivery_id,
+                )
+
+                if send_result.get("status") == "insufficient_evidence":
+                    adapter.send(
+                        {"chat_id": chat_id},
+                        "Based on verified organizational records, there is insufficient evidence to answer this inquiry within this chat's scope.",
+                        reply_delivery_id,
+                    )
+
+                webhook_delivery_store.mark_completed(reply_delivery_id)
+                return {
+                    "status": "responded",
+                    "channel": "telegram",
+                    "organization_id": org_id,
+                    "delivery_id": delivery_id,
+                    "reply_delivery_id": reply_delivery_id,
+                    "chat_id": event.chat_id,
+                    "message_id": event.message_id,
+                    "record_id": record.id,
+                    "chunk_ids": [c.id for c in chunks],
+                    "send_result": send_result,
+                }
+            except Exception as e:
+                logger.error(f"Telegram mention reply error for delivery {delivery_id}: {e}")
+                webhook_delivery_store.mark_failed(reply_delivery_id, str(e))
+                return {
+                    "status": "reply_failed",
+                    "delivery_id": delivery_id,
+                    "error": str(e),
+                }
+
     return {
         "status": "ingested",
         "channel": "telegram",

@@ -257,3 +257,46 @@ def test_telegram_author_identity_link_and_acl_enforcement():
     assert chunk.author == "Arjun Sharma"
     assert chunk.provenance["internal_person_id"] == "usr_arjun"
     assert chunk.provenance["is_verified"] is True
+
+
+def test_telegram_webhook_mention_triggers_reply(monkeypatch):
+    from app.channels.outbound import channel_message_delivery_service
+
+    send_calls = []
+    def mock_send_message(principal, platform, destination_id, query, idempotency_key):
+        send_calls.append({
+            "principal": principal,
+            "platform": platform,
+            "destination_id": destination_id,
+            "query": query,
+            "idempotency_key": idempotency_key
+        })
+        return {"status": "sent"}
+
+    monkeypatch.setattr(channel_message_delivery_service, "send_message", mock_send_message)
+
+    payload = {
+        "update_id": 50001,
+        "message": {
+            "message_id": 202,
+            "date": 1726435200,
+            "chat": {"id": int(BOUND_CHAT_ID), "title": "GDG MCET Core Team Telegram", "type": "supergroup"},
+            "from": {"id": 998877, "username": "towfik", "first_name": "Towfik"},
+            "text": "@GDGCThreadBot What are our upcoming events?",
+            "entities": [{"type": "mention", "offset": 0, "length": 14}]
+        }
+    }
+
+    res = client.post(
+        "/api/webhooks/telegram",
+        json=payload,
+        headers={"X-Telegram-Bot-Api-Secret-Token": TEST_SECRET}
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "responded"
+    assert data["reply_delivery_id"] == f"tg_reply_{BOUND_CHAT_ID}_202"
+    assert len(send_calls) == 1
+    assert send_calls[0]["query"] == "What are our upcoming events?"
+    assert send_calls[0]["platform"] == ChannelType.TELEGRAM
+

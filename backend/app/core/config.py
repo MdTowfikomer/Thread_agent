@@ -125,7 +125,7 @@ class Settings:
     # Discord Webhook & Gateway Ed25519 Cryptographic Verification
     @property
     def discord_public_key(self) -> str:
-        return os.getenv("THREAD_DISCORD_PUBLIC_KEY", os.getenv("DISCORD_PUBLIC_KEY", os.getenv("DISCOR_PUBLIC_KEY", ""))).strip()
+        return os.getenv("THREAD_DISCORD_PUBLIC_KEY", os.getenv("DISCORD_PUBLIC_KEY", "")).strip()
 
     @property
     def discord_allowed_guild_ids(self) -> List[str]:

@@ -69,6 +69,16 @@
       "sha256": "43485d6d99654f00ba986b10a0109bc1a86b503cdd0e66b1e61c0ddc19d9fa75",
       "status": "frozen",
       "description": "Transactional idempotent audit ledger for authorized outbound channel responses"
+    },
+    "014_outbound_delivery_unknown_status": {
+      "sha256": "456763d37c4838bfb1d5168e09f6a6cca82c1a6b56bb8ec7b8bcc3de0ce1908b",
+      "status": "frozen",
+      "description": "Add unknown delivery status for ambiguous outbound timeouts"
+    },
+    "015_conversation_turns_and_community_tools": {
+      "sha256": "6ea2d93f64bec1d8bd8980500543ba93dbb8166de0e1a8e53664e5d671dfaafb",
+      "status": "frozen",
+      "description": "Conversation turns, community events, community resources, and account link tokens"
     }
   }
 }

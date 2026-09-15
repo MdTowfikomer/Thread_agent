@@ -273,24 +273,46 @@ def synthesis_node(state: GraphState) -> Dict[str, Any]:
             events = event_assistant.list_upcoming_events(state.organization_id)
             final_answer = event_assistant.format_events_response(events)
         elif tool == "resources":
-            resources = resource_assistant.search_resources(state.tool_args or "", state.organization_id)
+            resources = resource_assistant.search_resources(
+                query=state.tool_args or "",
+                org_id=state.organization_id,
+                access_context=state.access_context
+            )
             final_answer = resource_assistant.format_resources_response(resources)
         elif tool == "summary":
-            final_answer = summarizer_assistant.summarize_conversation(state.session_key)
+            parts = (state.session_key or "").split(":")
+            platform = parts[0] if len(parts) > 0 and parts[0] else "discord"
+            channel_id = parts[1] if len(parts) > 1 and parts[1] else (state.session_key or "")
+            final_answer = summarizer_assistant.summarize_channel_discussion(
+                organization_id=state.organization_id,
+                channel_id=channel_id,
+                platform=platform,
+                access_context=state.access_context,
+                window_hours=48
+            )
         elif tool == "github":
             repo = github_helper.get_bound_repository(state.organization_id)
             final_answer = github_helper.format_github_response(repo)
         elif tool == "link":
             arg = (state.tool_args or "").strip()
-            plat = state.session_key.split(":")[0] if ":" in state.session_key else "community"
+            parts = (state.session_key or "").split(":")
+            plat = parts[0] if len(parts) > 0 and parts[0] else "community"
             user_id = state.access_context.user_id if state.access_context else "anon"
-            if arg.startswith("LINK-"):
+            if arg:
                 _, final_answer = account_link_tool.redeem_link_token(
-                    arg, target_platform=plat, target_account_id=user_id, target_username=user_id, org_id=state.organization_id
+                    raw_token=arg,
+                    target_platform=plat,
+                    target_account_id=user_id,
+                    target_username=user_id,
+                    org_id=state.organization_id
                 )
             else:
                 tok = account_link_tool.generate_link_token(
-                    plat, user_id, user_id, user_id, org_id=state.organization_id
+                    initiating_platform=plat,
+                    initiating_account_id=user_id,
+                    initiating_username=user_id,
+                    person_id=user_id,
+                    org_id=state.organization_id
                 )
                 final_answer = (
                     f"🔗 **Cross-Platform Account Linking**\n\n"

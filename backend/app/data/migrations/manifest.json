@@ -79,6 +79,12 @@
       "sha256": "6ea2d93f64bec1d8bd8980500543ba93dbb8166de0e1a8e53664e5d671dfaafb",
       "status": "frozen",
       "description": "Conversation turns, community events, community resources, and account link tokens"
+    },
+    "016_harden_community_tables_and_atomic_linking": {
+      "sha256": "b22a897d1fa1e739e9a6f314477d8b93982469e1373060ae1551c5a8da70467e",
+      "status": "frozen",
+      "description": "Harden community tables with FORCE RLS, revoke untrusted access, and upgrade account link tokens to 256-bit hashed atomic schema"
     }
   }
 }
+

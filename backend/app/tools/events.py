@@ -1,55 +1,22 @@
 import os
 import json
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
 from app.core.config import settings
 
 logger = logging.getLogger("thread.tools.events")
 
-INITIAL_EVENTS = [
-    {
-        "title": "GDG MCET Agentic AI Hackathon 2026",
-        "description": "Build autonomous agents, multi-agent workflows, and collaborative tools using Gemini 2.5 Flash and LangGraph.",
-        "start_time": (datetime.now(timezone.utc) + timedelta(days=7)).replace(hour=4, minute=0, second=0, microsecond=0),
-        "end_time": (datetime.now(timezone.utc) + timedelta(days=8)).replace(hour=12, minute=0, second=0, microsecond=0),
-        "location_or_url": "MCET Tech Hub / Virtual",
-        "rsvp_url": "https://gdg.community.dev/events/details/developer-student-clubs-dr-mahalingam-college-of-engineering-and-technology-pollachi-presents-agentic-ai-hackathon/",
-        "speakers": ["Google Developer Experts", "Core Tech Leads"],
-        "status": "upcoming"
-    },
-    {
-        "title": "Open Source Git & GitHub Hands-on Workshop",
-        "description": "Master branching strategies, PR etiquette, automated CI/CD checks, and contribute to the open-source Thread Agent project.",
-        "start_time": (datetime.now(timezone.utc) + timedelta(days=14)).replace(hour=8, minute=30, second=0, microsecond=0),
-        "end_time": (datetime.now(timezone.utc) + timedelta(days=14)).replace(hour=11, minute=30, second=0, microsecond=0),
-        "location_or_url": "MCET Computer Lab 3 & Discord Voice",
-        "rsvp_url": "https://gdg.community.dev/events/mcet-git-github-workshop/",
-        "speakers": ["Towfik Omer (Lead)", "Tech Team"],
-        "status": "upcoming"
-    },
-    {
-        "title": "Cloud, Microservices & Docker BootCamp",
-        "description": "Deep dive into containerizing backend applications, PostgreSQL pgvector setup, and deploying with zero-downtime.",
-        "start_time": (datetime.now(timezone.utc) + timedelta(days=25)).replace(hour=4, minute=0, second=0, microsecond=0),
-        "end_time": (datetime.now(timezone.utc) + timedelta(days=25)).replace(hour=10, minute=0, second=0, microsecond=0),
-        "location_or_url": "Main Campus Auditorium",
-        "rsvp_url": "https://gdg.community.dev/events/mcet-cloud-docker-bootcamp/",
-        "speakers": ["Cloud Architects", "DevOps Specialists"],
-        "status": "upcoming"
-    }
-]
-
 class EventAssistant:
     """
-    Community Event Assistant tool.
-    Allows community members across Slack, Discord, and Telegram to discover upcoming
-    workshops, hackathons, speaker sessions, and RSVP links.
+    Authoritative Community Event Assistant tool.
+    Strictly queries published community events from Supabase PostgreSQL.
+    CRITICAL RULE: Never fabricates or seeds mock events. Fails closed with
+    'no published events' when the database contains no verified events.
     """
     def __init__(self):
-        self._cache: List[Dict[str, Any]] = []
-        self._ensure_seeded()
+        pass
 
     def _get_db_conn(self):
         db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
@@ -62,50 +29,15 @@ class EventAssistant:
             logger.warning(f"Failed to connect to database for events: {e}")
             return None
 
-    def _ensure_seeded(self) -> None:
-        """Seed initial events if table is empty."""
-        conn = self._get_db_conn()
-        if not conn:
-            self._cache = list(INITIAL_EVENTS)
-            return
-
-        try:
-            with conn:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT count(*) FROM community_events;")
-                    count = cur.fetchone()[0]
-                    if count == 0:
-                        for ev in INITIAL_EVENTS:
-                            cur.execute("""
-                                INSERT INTO community_events (
-                                    organization_id, title, description, start_time, end_time,
-                                    location_or_url, rsvp_url, speakers, status
-                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s);
-                            """, (
-                                "gdg_mcet",
-                                ev["title"],
-                                ev["description"],
-                                ev["start_time"],
-                                ev["end_time"],
-                                ev["location_or_url"],
-                                ev["rsvp_url"],
-                                json.dumps(ev["speakers"]),
-                                ev["status"],
-                            ))
-        except Exception as e:
-            logger.warning(f"Error seeding events: {e}")
-            self._cache = list(INITIAL_EVENTS)
-        finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
-
     def list_upcoming_events(self, org_id: str = "gdg_mcet", limit: int = 5) -> List[Dict[str, Any]]:
-        """Fetch upcoming events for organization."""
+        """
+        Fetch upcoming published events for the organization strictly from the database.
+        Returns an empty list if none exist or if database is unreachable (fail-closed).
+        """
         conn = self._get_db_conn()
         if not conn:
-            return self._cache[:limit]
+            logger.warning("Event lookup failed closed: Database unreachable.")
+            return []
 
         try:
             with conn:
@@ -115,41 +47,103 @@ class EventAssistant:
                         FROM community_events
                         WHERE organization_id = %s
                           AND status IN ('upcoming', 'in_progress')
+                          AND start_time >= NOW() - INTERVAL '1 day'
                         ORDER BY start_time ASC
                         LIMIT %s;
                     """, (org_id, limit))
                     rows = cur.fetchall()
-                    if rows:
-                        events = []
-                        for r in rows:
-                            events.append({
-                                "id": str(r[0]),
-                                "title": r[1],
-                                "description": r[2],
-                                "start_time": r[3],
-                                "end_time": r[4],
-                                "location_or_url": r[5],
-                                "rsvp_url": r[6],
-                                "speakers": r[7] if isinstance(r[7], list) else (json.loads(r[7]) if r[7] else []),
-                                "status": r[8]
-                            })
-                        return events
+                    events = []
+                    for r in rows:
+                        speakers_raw = r[7]
+                        if isinstance(speakers_raw, list):
+                            speakers = speakers_raw
+                        elif isinstance(speakers_raw, str):
+                            try:
+                                speakers = json.loads(speakers_raw)
+                            except Exception:
+                                speakers = []
+                        else:
+                            speakers = []
+
+                        events.append({
+                            "id": str(r[0]),
+                            "title": r[1],
+                            "description": r[2],
+                            "start_time": r[3],
+                            "end_time": r[4],
+                            "location_or_url": r[5],
+                            "rsvp_url": r[6],
+                            "speakers": speakers,
+                            "status": r[8]
+                        })
+                    return events
         except Exception as e:
-            logger.warning(f"Failed to query community_events: {e}")
+            logger.error(f"Failed to query community_events: {e}")
+            return []
         finally:
             try:
                 conn.close()
             except Exception:
                 pass
 
-        return self._cache[:limit]
+    def create_event(
+        self,
+        org_id: str,
+        title: str,
+        start_time: datetime,
+        end_time: Optional[datetime] = None,
+        description: Optional[str] = None,
+        location_or_url: Optional[str] = None,
+        rsvp_url: Optional[str] = None,
+        speakers: Optional[List[str]] = None,
+        status: str = "upcoming"
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Persist a verified community event into the database.
+        Must only be called by authorized organizational organizers.
+        """
+        conn = self._get_db_conn()
+        if not conn:
+            raise RuntimeError("Database unavailable for event creation.")
+
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO community_events (
+                            organization_id, title, description, start_time, end_time,
+                            location_or_url, rsvp_url, speakers, status
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                        RETURNING id, title, start_time;
+                    """, (
+                        org_id,
+                        title.strip(),
+                        description.strip() if description else None,
+                        start_time,
+                        end_time,
+                        location_or_url.strip() if location_or_url else None,
+                        rsvp_url.strip() if rsvp_url else None,
+                        json.dumps(speakers or []),
+                        status
+                    ))
+                    row = cur.fetchone()
+                    return {"id": str(row[0]), "title": row[1], "start_time": row[2]}
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     def format_events_response(self, events: List[Dict[str, Any]]) -> str:
-        """Format events list into a clear markdown response."""
+        """
+        Format published events into clean markdown. Fails closed with
+        'no published events' when none exist.
+        """
         if not events:
             return (
-                "📅 **Upcoming Community Events**\n\n"
-                "There are no upcoming events scheduled at this moment. Stay tuned for announcements in our community channels!"
+                "📅 **Community Events**\n\n"
+                "There are currently no published events scheduled for GDG MCET.\n"
+                "Stay tuned to this channel for future workshop and hackathon announcements!"
             )
 
         lines = ["📅 **Upcoming Community Events for GDG MCET:**\n"]

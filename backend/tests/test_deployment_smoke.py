@@ -103,8 +103,21 @@ def test_render_free_demo_advisory_lock_leader_election():
     mock_cur.fetchone.return_value = (False,)
     with patch("psycopg2.connect", return_value=mock_conn), \
          patch.dict(os.environ, {"SUPABASE_DB_URL": "postgresql://test:test@localhost:5432/test"}):
-        conn_peer = try_acquire_gateway_advisory_lock()
-        assert conn_peer is None, "Peer must receive None and enter standby mode"
+        conn_peer = try_acquire_gateway_advisory_lock(fail_on_db_error=True)
+        assert conn_peer is None, "Peer must receive None and enter standby mode when lock is authoritatively held by peer"
+
+    # 3. Supabase outage / DB error must fail fast when fail_on_db_error=True
+    with patch("psycopg2.connect", side_effect=Exception("Connection to PostgreSQL refused (Supabase outage)")), \
+         patch.dict(os.environ, {"SUPABASE_DB_URL": "postgresql://test:test@localhost:5432/test"}):
+        with pytest.raises(RuntimeError) as exc_db:
+            try_acquire_gateway_advisory_lock(fail_on_db_error=True)
+        assert "PostgreSQL error checking advisory lock" in str(exc_db.value)
+
+    # 4. Missing DB URL with fail_on_db_error=True must fail fast
+    with patch.dict(os.environ, {"SUPABASE_DB_URL": "", "DATABASE_URL": ""}):
+        with pytest.raises(RuntimeError) as exc_missing:
+            try_acquire_gateway_advisory_lock(fail_on_db_error=True)
+        assert "not configured to acquire advisory lock" in str(exc_missing.value)
 
 
 # ==============================================================================

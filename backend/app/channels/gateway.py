@@ -324,17 +324,27 @@ discord_gateway_bot = DiscordGatewayBot()
 DISCORD_GATEWAY_ADVISORY_LOCK_ID = 1414025812
 
 
-def try_acquire_gateway_advisory_lock() -> Optional[Any]:
+def try_acquire_gateway_advisory_lock(fail_on_db_error: bool = False) -> Optional[Any]:
     """
     Attempt to acquire non-blocking PostgreSQL session advisory lock for Discord Gateway.
     Guarantees that across Render horizontal restarts or zero-downtime overlaps,
     only a single worker process connects to Discord Gateway.
-    Returns the database connection holding the lock, or None if unavailable/held by peer.
+
+    Returns:
+      - connection object: if lock was successfully acquired (this process is leader).
+      - None: if and only if PostgreSQL authoritatively confirms the lock is held by another active peer.
+    
+    Raises:
+      - RuntimeError: if fail_on_db_error is True and database is unreachable, missing, or errors.
     """
     db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
     if not db_url:
-        logger.warning("[Discord Gateway] No database URL available to acquire advisory lock.")
+        msg = "[Discord Gateway] SUPABASE_DB_URL/DATABASE_URL is not configured to acquire advisory lock."
+        logger.error(msg)
+        if fail_on_db_error:
+            raise RuntimeError(msg)
         return None
+
     try:
         import psycopg2
         conn = psycopg2.connect(db_url)
@@ -347,11 +357,15 @@ def try_acquire_gateway_advisory_lock() -> Optional[Any]:
                 logger.info(f"[Discord Gateway] Acquired PostgreSQL advisory lock ({DISCORD_GATEWAY_ADVISORY_LOCK_ID}). Process is Gateway leader.")
                 return conn
             else:
-                logger.warning(f"[Discord Gateway] Advisory lock ({DISCORD_GATEWAY_ADVISORY_LOCK_ID}) is held by another worker. Standby mode.")
+                # Positively confirmed by PostgreSQL that another active session holds the lock
+                logger.warning(f"[Discord Gateway] Advisory lock ({DISCORD_GATEWAY_ADVISORY_LOCK_ID}) is held by an active peer instance. Standby mode.")
                 conn.close()
                 return None
     except Exception as e:
-        logger.error(f"[Discord Gateway] Error checking advisory lock: {e}")
+        msg = f"[Discord Gateway] PostgreSQL error checking advisory lock: {e}"
+        logger.error(msg)
+        if fail_on_db_error:
+            raise RuntimeError(msg) from e
         return None
 
 

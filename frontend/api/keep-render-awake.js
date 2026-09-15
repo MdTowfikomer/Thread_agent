@@ -1,19 +1,24 @@
 export default async function handler(req, res) {
-  // Enforce CRON_SECRET authorization for Vercel Cron
-  const authHeader = req.headers['authorization'];
+  // Strict fail-closed security: CRON_SECRET is required at runtime
   const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret || cronSecret.trim().length === 0) {
+    return res.status(500).json({
+      error: 'Server Misconfiguration',
+      message: 'CRON_SECRET environment variable is required and must be configured on Vercel.'
+    });
+  }
 
-  if (cronSecret) {
-    const isAuthorized =
-      authHeader === `Bearer ${cronSecret}` ||
-      req.query?.secret === cronSecret;
+  const authHeader = req.headers['authorization'];
+  const querySecret = req.query?.secret;
+  const isAuthorized =
+    authHeader === `Bearer ${cronSecret}` ||
+    querySecret === cronSecret;
 
-    if (!isAuthorized) {
-      return res.status(401).json({
-        error: 'Unauthorized',
-        message: 'Invalid or missing CRON_SECRET.'
-      });
-    }
+  if (!isAuthorized) {
+    return res.status(401).json({
+      error: 'Unauthorized',
+      message: 'Invalid or missing CRON_SECRET.'
+    });
   }
 
   const renderUrl = process.env.RENDER_SERVICE_URL || 'https://thread-agent-api.onrender.com';

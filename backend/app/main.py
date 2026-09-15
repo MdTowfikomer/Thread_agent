@@ -42,12 +42,14 @@ async def lifespan(app: FastAPI):
             raise RuntimeError(
                 f"Configuration Error: render_free_demo requires exactly 1 worker (WEB_CONCURRENCY=1), but found {web_concurrency}."
             )
-        gateway_lock_conn = try_acquire_gateway_advisory_lock()
+        # In render_free_demo, a database or lock failure must fail startup fast.
+        # Standby mode is ONLY entered if PostgreSQL authoritatively confirms an active peer holds the lock.
+        gateway_lock_conn = try_acquire_gateway_advisory_lock(fail_on_db_error=True)
         if gateway_lock_conn:
             print("[Discord Gateway] Acquired advisory lock. Launching background Gateway worker (render_free_demo leader)...")
             discord_gateway_bot.start_background()
         else:
-            print("[Discord Gateway] Advisory lock held by peer instance. Running API in standby for Discord Gateway.")
+            print("[Discord Gateway] Verified active peer holds advisory lock. Running API in standby for Discord Gateway.")
     elif settings.is_development and settings.discord_bot_token and os.getenv("THREAD_START_GATEWAY_BOT", "false").lower() in ("true", "1"):
         print("[Discord Gateway] Launching single-worker background connector task (development demo)...")
         discord_gateway_bot.start_background()

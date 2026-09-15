@@ -85,12 +85,12 @@ class GitHubRepositoryBindingStore:
         self._init_defaults()
 
     def _init_defaults(self):
-        # Default GDG MCET Core Platform repository binding
+        # Authoritative binding for Thread_Agent production repository
         self.register_binding(
-            repository_id="1029384",
-            repository_name="gdgmcet/core-platform",
+            repository_id="1371393965",
+            repository_name="mdtowfikomer/thread_agent",
             organization_id="gdg_mcet",
-            installation_id="gh_inst_gdg_1"
+            installation_id="gh_inst_thread_agent"
         )
 
     def register_binding(
@@ -187,3 +187,75 @@ class GitHubRepositoryBindingStore:
         self._init_defaults()
 
 github_binding_store = GitHubRepositoryBindingStore()
+
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(description="Authoritative Thread Organization & Repository Binding Admin Tool")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # Bind command
+    bind_parser = subparsers.add_parser("bind", help="Bind a GitHub repository to a Thread organization")
+    bind_parser.add_argument("--repo-id", required=True, help="GitHub numeric repository ID (e.g. 1371393965)")
+    bind_parser.add_argument("--repo-name", required=True, help="GitHub repository full name (e.g. MdTowfikomer/Thread_agent)")
+    bind_parser.add_argument("--org", required=True, help="Thread organization ID (e.g. gdg_mcet)")
+    bind_parser.add_argument("--installation-id", default=None, help="GitHub App installation ID (optional)")
+
+    # List command
+    subparsers.add_parser("list", help="List all active repository bindings from DB and memory")
+
+    # Remove command
+    remove_parser = subparsers.add_parser("remove", help="Remove or deactivate a repository binding")
+    remove_parser.add_argument("--repo-id", required=True, help="GitHub numeric repository ID to remove")
+
+    args = parser.parse_args()
+
+    if args.command == "bind":
+        binding = github_binding_store.register_binding(
+            repository_id=args.repo_id,
+            repository_name=args.repo_name,
+            organization_id=args.org,
+            installation_id=args.installation_id,
+            is_active=True,
+            metadata={"full_name": args.repo_name}
+        )
+        print(f"[SUCCESS] Bound repository '{binding.repository_name}' (ID: {binding.repository_id}) to organization '{binding.organization_id}'.")
+
+    elif args.command == "list":
+        db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+        print("\n--- In-Memory Bindings ---")
+        for rid, b in github_binding_store._bindings_by_id.items():
+            print(f"  Repo ID: {rid} | Repo: {b.repository_name} | Org: {b.organization_id} | Active: {b.is_active}")
+        if db_url:
+            print("\n--- Database Bindings (PostgreSQL) ---")
+            try:
+                import psycopg2
+                with psycopg2.connect(db_url) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT repository_id, repository_name, organization_id, is_active FROM github_repository_bindings ORDER BY bound_at;")
+                        rows = cur.fetchall()
+                        for r in rows:
+                            print(f"  Repo ID: {r[0]} | Repo: {r[1]} | Org: {r[2]} | Active: {r[3]}")
+            except Exception as e:
+                print(f"  Error fetching from DB: {e}")
+
+    elif args.command == "remove":
+        rid = str(args.repo_id).strip()
+        github_binding_store._bindings_by_id.pop(rid, None)
+        db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+        if db_url:
+            try:
+                import psycopg2
+                with psycopg2.connect(db_url) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("DELETE FROM github_repository_bindings WHERE repository_id = %s;", (rid,))
+                    conn.commit()
+                print(f"[SUCCESS] Removed repository binding for ID '{rid}' from database and memory.")
+            except Exception as e:
+                print(f"[ERROR] Failed to delete from database: {e}")
+                sys.exit(1)
+        else:
+            print(f"[SUCCESS] Removed repository binding for ID '{rid}' from memory.")
+

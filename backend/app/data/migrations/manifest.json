@@ -49,6 +49,11 @@
       "sha256": "bb74dc3321640270fd3a50ea3964e0b0818fc59feeac8d150260d44dc479151c",
       "status": "frozen",
       "description": "Webhook delivery processing lifecycle states: processing, completed, failed"
+    },
+    "010_seed_thread_agent_repository_binding": {
+      "sha256": "ab7754ae384d180aa49c2b50fc4ccbc971c445a5dd349c583c486dd3ea8f8ca6",
+      "status": "frozen",
+      "description": "Seed authoritative Thread_Agent repository binding and purge legacy fixture repository bindings"
     }
   }
 }

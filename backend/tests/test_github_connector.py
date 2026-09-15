@@ -22,6 +22,23 @@ from app.identity.service import identity_service
 
 client = TestClient(app)
 
+@pytest.fixture(autouse=True)
+def setup_test_repository_fixtures():
+    """
+    Registers gdgmcet/core-platform strictly as a test fixture for hermetic tests.
+    Does not bleed into production runtime defaults.
+    """
+    github_binding_store.register_binding(
+        repository_id="1029384",
+        repository_name="gdgmcet/core-platform",
+        organization_id="gdg_mcet",
+        installation_id="gh_inst_test"
+    )
+    yield
+    # Remove test fixture binding
+    github_binding_store._bindings_by_id.pop("1029384", None)
+    github_binding_store._bindings_by_name.pop("gdgmcet/core-platform", None)
+
 def test_github_signature_verification():
     secret = "my_webhook_secret_key_123"
     body = b'{"action": "opened", "number": 1}'
@@ -714,3 +731,21 @@ def test_privileged_identity_link_creation_fails_closed_on_db_error(monkeypatch)
     # In-memory mapping must NOT have been updated
     key = "gdg_mcet:github:999888777"
     assert key not in service._account_links
+
+def test_github_runtime_default_binding_is_thread_agent_only():
+    """
+    Asserts that the production runtime store defaults exclusively to Thread_Agent
+    (repo ID 1371393965 / mdtowfikomer/thread_agent) and does NOT contain demo fixtures.
+    """
+    from app.channels.installation import GitHubRepositoryBindingStore
+    fresh_store = GitHubRepositoryBindingStore()
+    
+    # Assert Thread_Agent is bound
+    assert fresh_store.get_organization_for_repository("1371393965") == "gdg_mcet"
+    assert fresh_store.get_organization_for_repository(None, "MdTowfikomer/Thread_agent") == "gdg_mcet"
+    assert fresh_store.get_organization_for_repository(None, "mdtowfikomer/thread_agent") == "gdg_mcet"
+
+    # Assert legacy demo fixture is NOT a runtime default
+    assert "1029384" not in fresh_store._bindings_by_id
+    assert "gdgmcet/core-platform" not in fresh_store._bindings_by_name
+

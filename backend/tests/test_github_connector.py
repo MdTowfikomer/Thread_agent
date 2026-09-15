@@ -478,3 +478,136 @@ def test_github_webhook_caller_cannot_override_organization(monkeypatch):
     assert data["organization_id"] == "gdg_mcet"  # NOT foreign_tenant_hack
     rec = memory_repository.get_record(data["record_ids"][0])
     assert rec.organization_id == "gdg_mcet"
+
+def test_github_webhook_transient_failure_allows_retry_without_event_loss(monkeypatch):
+    """
+    P0 Verification:
+    If parsing or memory persistence fails, delivery status is marked as 'failed',
+    and GitHub retries with the SAME delivery ID are allowed and succeed without being dropped as 'duplicate'.
+    """
+    secret = "test_webhook_secret_key_32_bytes_long!"
+    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", secret)
+    webhook_delivery_store.clear()
+
+    payload = {
+        "action": "opened",
+        "repository": {
+            "id": 1029384,
+            "full_name": "gdgmcet/core-platform",
+            "private": False
+        },
+        "pull_request": {
+            "number": 99,
+            "title": "feat: transient failure recovery",
+            "body": "Checking retry behavior.",
+            "user": {"id": 583231, "login": "arjun-dev"},
+            "created_at": "2026-09-14T23:30:00Z",
+            "html_url": "https://github.com/gdgmcet/core-platform/pull/99"
+        }
+    }
+    body = json.dumps(payload).encode("utf-8")
+    sig = make_github_signature(body, secret)
+    delivery_id = f"del_retry_test_{uuid.uuid4().hex[:12]}"
+
+    # Attempt 1: Simulate persistence failure
+    def failing_persist(record, chunks):
+        return False, 0
+
+    monkeypatch.setattr(memory_repository, "persist_record_and_chunks", failing_persist)
+
+    resp1 = client.post(
+        "/api/webhooks/github",
+        content=body,
+        headers={
+            "X-GitHub-Event": "pull_request",
+            "X-GitHub-Delivery": delivery_id,
+            "X-Hub-Signature-256": sig,
+            "Content-Type": "application/json"
+        }
+    )
+    assert resp1.status_code == 500
+    assert webhook_delivery_store.get_delivery_status(delivery_id) == "failed"
+
+    # Attempt 2: GitHub retries with the exact same delivery ID and normal persistence
+    monkeypatch.undo()
+    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", secret)
+
+    resp2 = client.post(
+        "/api/webhooks/github",
+        content=body,
+        headers={
+            "X-GitHub-Event": "pull_request",
+            "X-GitHub-Delivery": delivery_id,
+            "X-Hub-Signature-256": sig,
+            "Content-Type": "application/json"
+        }
+    )
+    assert resp2.status_code == 200
+    data2 = resp2.json()
+    assert data2["status"] == "ingested"  # NOT duplicate!
+    assert data2["records_count"] == 1
+    assert webhook_delivery_store.get_delivery_status(delivery_id) == "completed"
+
+def test_github_webhook_delivery_ledger_database_failure_fails_closed(monkeypatch):
+    """
+    P1 Verification:
+    If the delivery ledger database operation fails, the request fails closed with 500
+    so GitHub retries later; deliveries are never accepted without durable recording.
+    """
+    secret = "test_webhook_secret_key_32_bytes_long!"
+    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", secret)
+
+    from app.channels.delivery import DeliveryLedgerError
+    def failing_claim(*args, **kwargs):
+        raise DeliveryLedgerError("Database connection dropped.")
+
+    monkeypatch.setattr(webhook_delivery_store, "claim_delivery", failing_claim)
+
+    payload = {
+        "action": "opened",
+        "repository": {"id": 1029384, "full_name": "gdgmcet/core-platform"}
+    }
+    body = json.dumps(payload).encode("utf-8")
+
+    resp = client.post(
+        "/api/webhooks/github",
+        content=body,
+        headers={
+            "X-GitHub-Event": "pull_request",
+            "X-GitHub-Delivery": "del_db_fail",
+            "X-Hub-Signature-256": make_github_signature(body, secret),
+            "Content-Type": "application/json"
+        }
+    )
+    assert resp.status_code == 500
+    assert "Delivery ledger unavailable" in resp.json()["detail"]
+
+def test_privileged_identity_link_creation_fails_closed_on_db_error(monkeypatch):
+    """
+    P2 Verification:
+    If durable database persistence fails, privileged link creation must fail closed.
+    In-memory cache must not grant permissions without durable recording.
+    """
+    from app.identity.service import CrossChannelIdentityService, IdentityPersistenceError, LinkVerificationType
+    service = CrossChannelIdentityService()
+
+    def failing_db_persist(link, *args, **kwargs):
+        raise RuntimeError("Postgres connection lost during link insert.")
+
+    monkeypatch.setattr(service, "_persist_link_to_db", failing_db_persist)
+
+    with pytest.raises(IdentityPersistenceError):
+        service.link_account(
+            organization_id="gdg_mcet",
+            person_id="usr_arjun",
+            channel_type=ChannelType.GITHUB,
+            account_id="999888777",
+            username="arjun-new-account",
+            link_type=LinkVerificationType.ORGANIZER_MANUAL,
+            confidence=1.0,
+            evidence={"verifier": "admin"}
+        )
+
+    # In-memory mapping must NOT have been updated
+    key = "gdg_mcet:github:999888777"
+    assert key not in service._account_links

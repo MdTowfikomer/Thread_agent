@@ -42,8 +42,13 @@
     },
     "008_identity_persistence_and_github_bindings": {
       "sha256": "0f5f5ba3f3dc8a4864b3a48dcf080507b4ef98afefa21ef792be57c175a0b0ce",
-      "status": "active",
+      "status": "frozen",
       "description": "Cross-channel identity persistence & server-owned GitHub repository bindings with webhook delivery replay protection"
+    },
+    "009_delivery_ledger_states": {
+      "sha256": "bb74dc3321640270fd3a50ea3964e0b0818fc59feeac8d150260d44dc479151c",
+      "status": "frozen",
+      "description": "Webhook delivery processing lifecycle states: processing, completed, failed"
     }
   }
 }

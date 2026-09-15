@@ -33,6 +33,10 @@ class IdentityResolutionResult(BaseModel):
     is_synthetic_public: bool = False
     evidence: Dict[str, Any] = Field(default_factory=dict)
 
+class IdentityPersistenceError(RuntimeError):
+    """Raised when durable identity persistence fails or is not configured in production."""
+    pass
+
 class CrossChannelIdentityService:
     """
     Authoritative Cross-Channel Identity Mapping Service.
@@ -70,7 +74,8 @@ class CrossChannelIdentityService:
             display_name="Arjun Sharma",
             link_type=LinkVerificationType.ORGANIZER_MANUAL,
             confidence=1.0,
-            evidence={"verified_by": "bootstrap", "reason": "Founder Organizer"}
+            evidence={"verified_by": "bootstrap", "reason": "Founder Organizer"},
+            is_bootstrap=True
         )
 
         # Arjun: GitHub Lead Developer
@@ -83,7 +88,8 @@ class CrossChannelIdentityService:
             display_name="Arjun Sharma",
             link_type=LinkVerificationType.OAUTH_VERIFIED,
             confidence=1.0,
-            evidence={"oauth_provider": "github", "verified_at": "2026-09-01T00:00:00Z"}
+            evidence={"oauth_provider": "github", "verified_at": "2026-09-01T00:00:00Z"},
+            is_bootstrap=True
         )
 
         # Priya: Tech Lead GitHub & Discord
@@ -96,7 +102,8 @@ class CrossChannelIdentityService:
             display_name="Priya Ramesh",
             link_type=LinkVerificationType.ORGANIZER_MANUAL,
             confidence=1.0,
-            evidence={"verified_by": "usr_arjun"}
+            evidence={"verified_by": "usr_arjun"},
+            is_bootstrap=True
         )
 
     def _account_key(self, organization_id: str, channel_type: ChannelType, account_id: str) -> str:
@@ -109,11 +116,12 @@ class CrossChannelIdentityService:
         channel_type: ChannelType,
         account_id: str,
         link_type: LinkVerificationType,
-        evidence: Optional[Dict[str, Any]] = None,
         confidence: float = 1.0,
+        evidence: Optional[Dict[str, Any]] = None,
         username: Optional[str] = None,
         display_name: Optional[str] = None,
-        email: Optional[str] = None
+        email: Optional[str] = None,
+        is_bootstrap: bool = False
     ) -> ChannelAccountLink:
         """
         Links an immutable channel account to a canonical person within an organization.
@@ -158,15 +166,21 @@ class CrossChannelIdentityService:
             is_verified=is_verified
         )
 
+        # 1. Durable database persistence FIRST (fail closed)
+        try:
+            self._persist_link_to_db(link, is_bootstrap=is_bootstrap)
+        except IdentityPersistenceError:
+            raise
+        except Exception as e:
+            raise IdentityPersistenceError(f"Failed to persist identity link to durable database: {e}") from e
+
+        # 2. Only after durable persistence succeeds, update local memory cache
         self._account_links[key] = link
         person_key = f"{organization_id}:{person_id}"
         links = self._person_links.setdefault(person_key, [])
         links = [l for l in links if l.account_id != link.account_id or l.channel_type != channel_type]
         links.append(link)
         self._person_links[person_key] = links
-
-        # Mirror to PostgreSQL if database connection is configured
-        self._persist_link_to_db(link)
 
         # Mirror into legacy membership_store identity mappings for compatibility
         try:
@@ -183,13 +197,26 @@ class CrossChannelIdentityService:
 
         return link
 
-    def _persist_link_to_db(self, link: ChannelAccountLink):
-        """Persists channel account link to PostgreSQL database if connected."""
+    def _persist_link_to_db(self, link: ChannelAccountLink, is_bootstrap: bool = False):
+        """
+        Persists channel account link to PostgreSQL database.
+        Fails closed: raises IdentityPersistenceError if durable write fails.
+        In-memory fallback is restricted to explicitly offline development/test mode.
+        """
         import os
         import json
+        from app.core.config import settings
+
         db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
         if not db_url:
+            # Check if offline mode or bootstrap is allowed
+            if not is_bootstrap and settings.APP_ENV != "development" and not os.getenv("THREAD_ALLOW_OFFLINE_IDENTITY"):
+                raise IdentityPersistenceError(
+                    "Identity persistence failed: durable database is not configured in production. "
+                    "Cannot establish persistent channel account links without database storage."
+                )
             return
+
         try:
             import psycopg2
             with psycopg2.connect(db_url) as conn:
@@ -221,7 +248,8 @@ class CrossChannelIdentityService:
                     ))
                 conn.commit()
         except Exception as e:
-            logger.warning(f"Database identity link persistence error: {e}")
+            logger.error(f"Durable database identity link persistence failure: {e}")
+            raise IdentityPersistenceError(f"Failed to persist identity link to durable database: {e}") from e
 
     def resolve_identity(
         self,

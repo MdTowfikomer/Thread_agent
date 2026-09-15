@@ -330,45 +330,75 @@ async def github_webhook(request: Request):
             detail=f"Repository '{repo_name}' (ID: {repo_id}) is not bound to any organization."
         )
 
-    # 5. Replay protection (deduplication)
-    if not webhook_delivery_store.record_delivery_if_new(
-        delivery_id=delivery_id,
-        organization_id=org_id,
-        channel_type="github",
-        event_type=event_type,
-        repository_id=repo_id
-    ):
-        logger.info(f"Duplicate delivery received: {delivery_id}")
-        return {
-            "status": "duplicate",
-            "delivery_id": delivery_id,
-            "event_type": event_type,
-            "organization_id": org_id,
-            "records_count": 0,
-            "chunks_count": 0,
-            "message": f"Delivery {delivery_id} already processed."
-        }
-
-    # 6. Parse events
+    # 5. Delivery claiming & replay protection (lifecycle states)
     try:
-        events = github_connector.parse_webhook_payload(event_type, payload, org_id)
+        can_process, claim_status, message = webhook_delivery_store.claim_delivery(
+            delivery_id=delivery_id,
+            organization_id=org_id,
+            channel_type="github",
+            event_type=event_type,
+            repository_id=repo_id
+        )
     except Exception as e:
-        logger.warning(f"Error parsing GitHub event '{event_type}': {e}")
-        return {"status": "skipped", "reason": str(e), "event_type": event_type}
+        logger.error(f"Delivery ledger error for delivery {delivery_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Delivery ledger unavailable: {e}"
+        )
 
-    # 7. Ingestion into memory_repository (transactional persistence)
-    ingested_records = []
-    ingested_chunks = []
-    for ev in events:
-        record, chunks, receipt = github_connector.ingest_event(ev)
-        ok, _ = memory_repository.persist_record_and_chunks(record, chunks)
-        if not ok:
+    if not can_process:
+        if claim_status == "duplicate":
+            return {
+                "status": "duplicate",
+                "delivery_id": delivery_id,
+                "event_type": event_type,
+                "organization_id": org_id,
+                "records_count": 0,
+                "chunks_count": 0,
+                "message": message or f"Delivery {delivery_id} already processed."
+            }
+        elif claim_status == "in_progress":
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to persist record and chunks to memory repository."
+                status_code=status.HTTP_409_CONFLICT,
+                detail=message or f"Delivery {delivery_id} is currently being processed."
             )
-        ingested_records.append(record.id)
-        ingested_chunks.extend([c.id for c in chunks])
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=message or f"Cannot process delivery {delivery_id}."
+            )
+
+    # 6. Parse and transactionally persist events
+    try:
+        try:
+            events = github_connector.parse_webhook_payload(event_type, payload, org_id)
+        except Exception as e:
+            logger.warning(f"Error parsing GitHub event '{event_type}': {e}")
+            webhook_delivery_store.mark_failed(delivery_id, f"Parse error: {e}")
+            return {"status": "skipped", "reason": str(e), "event_type": event_type}
+
+        ingested_records = []
+        ingested_chunks = []
+        for ev in events:
+            record, chunks, receipt = github_connector.ingest_event(ev)
+            ok, _ = memory_repository.persist_record_and_chunks(record, chunks)
+            if not ok:
+                raise RuntimeError("Failed to persist record and chunks to memory repository.")
+            ingested_records.append(record.id)
+            ingested_chunks.extend([c.id for c in chunks])
+
+        # Mark successfully completed
+        webhook_delivery_store.mark_completed(delivery_id)
+
+    except Exception as e:
+        logger.error(f"GitHub webhook processing failure for delivery {delivery_id}: {e}")
+        webhook_delivery_store.mark_failed(delivery_id, str(e))
+        if isinstance(e, HTTPException):
+            raise
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Webhook ingestion error: {e}"
+        )
 
     return {
         "status": "ingested",

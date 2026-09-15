@@ -1,3 +1,4 @@
+import os
 import json
 import time
 import logging
@@ -80,14 +81,25 @@ async def _process_and_followup_interaction(
 ):
     """Execute graph reconstruction and patch original deferred message on Discord."""
     try:
-        result = app_graph.invoke(graph_state)
-        final_answer = result.get("final_answer", "")
-        if application_id and interaction_token:
-            url = f"https://discord.com/api/v10/webhooks/{application_id}/{interaction_token}/messages/@original"
-            async with httpx.AsyncClient() as http_client:
-                await http_client.patch(url, json={"content": final_answer})
+        import asyncio
+        result = await asyncio.to_thread(app_graph.invoke, graph_state)
+        final_answer = result.get("final_answer", "").strip()
+        if not final_answer:
+            final_answer = "Based on verified organizational records, no conclusive answer could be derived."
+        if len(final_answer) > 1990:
+            final_answer = final_answer[:1990] + "..."
+
+        app_id = application_id or os.getenv("DISCORD_APPLICATION_ID", "1549157747495280641")
+        if app_id and interaction_token:
+            url = f"https://discord.com/api/v10/webhooks/{app_id}/{interaction_token}/messages/@original"
+            async with httpx.AsyncClient(timeout=25.0) as http_client:
+                resp = await http_client.patch(url, json={"content": final_answer})
+                if not resp.is_success:
+                    logger.error(f"[Discord Follow-up] Failed to patch interaction: {resp.status_code} - {resp.text}")
+                else:
+                    logger.info("[Discord Follow-up] Successfully patched interaction response.")
     except Exception as e:
-        logger.warning(f"Discord interaction follow-up dispatch failed: {e}")
+        logger.exception(f"Discord interaction follow-up dispatch failed: {e}")
 
 @router.post("/discord")
 async def discord_interactions_endpoint(request: Request, background_tasks: BackgroundTasks):
@@ -217,7 +229,7 @@ async def discord_interactions_endpoint(request: Request, background_tasks: Back
             access_context=access_context
         )
 
-        app_id = payload.get("application_id")
+        app_id = payload.get("application_id") or os.getenv("DISCORD_APPLICATION_ID", "1549157747495280641")
         token = payload.get("token")
         is_immediate = (
             request.headers.get("X-Test-Immediate-Response") == "true"

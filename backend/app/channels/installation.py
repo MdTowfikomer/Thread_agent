@@ -23,11 +23,16 @@ class GuildInstallationStore:
         self._init_defaults()
 
     def _init_defaults(self):
-        # Default GDG MCET Discord guild binding
+        # Default GDG MCET Discord guild bindings
+        self.register_installation(
+            guild_id="1549162455874412667",
+            organization_id="gdg_mcet",
+            guild_name="GDG MCET Discord"
+        )
         self.register_installation(
             guild_id="11223344",
             organization_id="gdg_mcet",
-            guild_name="GDG MCET Discord"
+            guild_name="GDG MCET Discord Test"
         )
         try:
             from app.core.config import settings

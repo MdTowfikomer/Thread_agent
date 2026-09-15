@@ -446,3 +446,91 @@ def test_live_supabase_reembedding_migration_and_dense_exclusion():
             conn.close()
         except Exception:
             pass
+
+
+def test_live_supabase_two_independent_workers_prevent_account_reassignment():
+    """
+    P0 Live Verification:
+    Tests two independent CrossChannelIdentityService instances against remote Supabase PostgreSQL.
+    Instance 1 links a GitHub account to person_1.
+    Instance 2 (with empty local memory) attempts to link the same GitHub account to person_2.
+    Must fail closed with AccountAlreadyLinkedError via the PostgreSQL row lock.
+    When Instance 1 revokes the link, Instance 2 can now link the account to person_2.
+    """
+    store = SupabaseMemoryStore()
+    check_live_prerequisites(store)
+
+    from app.identity.service import CrossChannelIdentityService, AccountAlreadyLinkedError
+    from app.core.canonical import ChannelType, LinkVerificationType
+    import psycopg2
+
+    db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+    if not db_url:
+        pytest.skip("SUPABASE_DB_URL not configured for live integration test.")
+
+    run_id = f"live_{uuid.uuid4().hex[:8]}"
+    org_id = f"org_{run_id}"
+    test_account_id = f"998877{run_id[:4]}"
+
+    worker_1 = CrossChannelIdentityService()
+    worker_1.clear()
+
+    worker_2 = CrossChannelIdentityService()
+    worker_2.clear()
+
+    try:
+        # 1. Worker 1 links account to usr_alice
+        worker_1.link_account(
+            organization_id=org_id,
+            person_id="usr_alice",
+            channel_type=ChannelType.GITHUB,
+            account_id=test_account_id,
+            username="alice-dev",
+            link_type=LinkVerificationType.OAUTH_VERIFIED,
+            confidence=1.0
+        )
+
+        # 2. Worker 2 (separate memory) attempts to link same account to usr_bob
+        with pytest.raises(AccountAlreadyLinkedError) as exc_info:
+            worker_2.link_account(
+                organization_id=org_id,
+                person_id="usr_bob",
+                channel_type=ChannelType.GITHUB,
+                account_id=test_account_id,
+                username="bob-dev",
+                link_type=LinkVerificationType.OAUTH_VERIFIED,
+                confidence=1.0
+            )
+        assert "already actively linked to person 'usr_alice'" in str(exc_info.value)
+
+        # 3. Worker 1 revokes the link
+        worker_1.revoke_account_link(
+            organization_id=org_id,
+            channel_type=ChannelType.GITHUB,
+            account_id=test_account_id,
+            actor_person_id="usr_alice"
+        )
+
+        # 4. Worker 2 now succeeds in linking to usr_bob
+        link_2 = worker_2.link_account(
+            organization_id=org_id,
+            person_id="usr_bob",
+            channel_type=ChannelType.GITHUB,
+            account_id=test_account_id,
+            username="bob-dev",
+            link_type=LinkVerificationType.OAUTH_VERIFIED,
+            confidence=1.0
+        )
+        assert link_2.person_id == "usr_bob"
+        assert link_2.is_active is True
+
+    finally:
+        try:
+            with psycopg2.connect(db_url) as cleanup_conn:
+                with cleanup_conn.cursor() as cur:
+                    cur.execute("DELETE FROM channel_account_links WHERE organization_id = %s;", (org_id,))
+                    cur.execute("DELETE FROM identity_audit_log WHERE organization_id = %s;", (org_id,))
+                cleanup_conn.commit()
+        except Exception:
+            pass
+

@@ -7,11 +7,12 @@ from app.core.config import settings
 from app.core.canonical import ChannelType, PermissionLevel, LinkVerificationType
 from app.core.auth import AuthenticatedPrincipal, get_current_principal
 from app.core.membership import membership_store
-from app.identity.service import identity_service
+from app.identity.service import identity_service, AccountAlreadyLinkedError, IdentityPersistenceError
 from app.identity.oauth import (
     oauth_state_manager,
     github_oauth_client,
     OAuthStateError,
+    OAuthStatePersistenceError,
     GitHubOAuthError
 )
 
@@ -83,7 +84,6 @@ class ManualLinkReviewSubmission(BaseModel):
 
 @router.get("/identity/github/connect")
 def initiate_github_connect(
-    redirect_uri: Optional[str] = Query(None, description="Optional OAuth redirect URI override."),
     principal: AuthenticatedPrincipal = Depends(require_authenticated_member)
 ):
     """
@@ -97,8 +97,7 @@ def initiate_github_connect(
     )
 
     auth_url = github_oauth_client.get_authorization_url(
-        state=state_token,
-        redirect_uri=redirect_uri
+        state=state_token
     )
 
     return {
@@ -141,6 +140,8 @@ def handle_github_oauth_callback(
     email = user_profile.get("email")
 
     # 4. Check whether account is already actively linked to another person
+    # Note: identity_service.link_account also authoritatively verifies this
+    # in an atomic database transaction with SELECT ... FOR UPDATE row-locking across workers.
     account_key = identity_service._account_key(organization_id, ChannelType.GITHUB, account_id)
     existing = identity_service._account_links.get(account_key)
     if existing and existing.is_active and existing.person_id != person_id:
@@ -153,23 +154,34 @@ def handle_github_oauth_callback(
     from datetime import datetime, timezone
     verified_at = datetime.now(timezone.utc).isoformat()
 
-    link = identity_service.link_account(
-        organization_id=organization_id,
-        person_id=person_id,
-        channel_type=ChannelType.GITHUB,
-        account_id=account_id,
-        username=username,
-        display_name=display_name,
-        email=email,
-        link_type=LinkVerificationType.OAUTH_VERIFIED,
-        confidence=1.0,
-        evidence={
-            "oauth_provider": "github",
-            "github_numeric_id": account_id,
-            "github_login": username,
-            "verified_at": verified_at
-        }
-    )
+    try:
+        link = identity_service.link_account(
+            organization_id=organization_id,
+            person_id=person_id,
+            channel_type=ChannelType.GITHUB,
+            account_id=account_id,
+            username=username,
+            display_name=display_name,
+            email=email,
+            link_type=LinkVerificationType.OAUTH_VERIFIED,
+            confidence=1.0,
+            evidence={
+                "oauth_provider": "github",
+                "github_numeric_id": account_id,
+                "github_login": username,
+                "verified_at": verified_at
+            }
+        )
+    except AccountAlreadyLinkedError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(e)
+        )
+    except IdentityPersistenceError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Durable identity persistence failure: {e}"
+        )
 
     # 6. Record immutable audit event
     identity_service.record_audit_event(

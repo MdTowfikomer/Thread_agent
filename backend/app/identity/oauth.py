@@ -18,6 +18,11 @@ class OAuthStateError(HTTPException):
     def __init__(self, detail: str):
         super().__init__(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
+class OAuthStatePersistenceError(HTTPException):
+    """Raised when OAuth state nonce cannot be durably recorded or consumed in the database."""
+    def __init__(self, detail: str):
+        super().__init__(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=detail)
+
 class GitHubOAuthError(HTTPException):
     """Raised when GitHub OAuth exchange or user retrieval fails."""
     def __init__(self, detail: str, status_code: int = status.HTTP_502_BAD_GATEWAY):
@@ -44,6 +49,7 @@ class OAuthStateManager:
         """
         Generates a cryptographically signed state token embedding person_id and organization_id.
         Stores nonce in database to prevent replay attacks.
+        Fails closed: raises OAuthStatePersistenceError if durable write fails.
         """
         secret = settings.jwt_secret
         if not secret:
@@ -73,7 +79,7 @@ class OAuthStateManager:
             "consumed_at": None
         }
 
-        # Mirror to PostgreSQL if configured
+        # Mirror to PostgreSQL if configured (fail-closed)
         db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
         if db_url:
             try:
@@ -87,7 +93,10 @@ class OAuthStateManager:
                         """, (nonce, organization_id, person_id, datetime.fromtimestamp(exp, tz=timezone.utc)))
                     conn.commit()
             except Exception as e:
-                logger.warning(f"Failed to record OAuth state nonce in database: {e}")
+                logger.error(f"Failed to record OAuth state nonce in database: {e}")
+                raise OAuthStatePersistenceError(f"Failed to durably record OAuth state nonce: {e}") from e
+        elif settings.APP_ENV != "development" and not os.getenv("THREAD_ALLOW_OFFLINE_IDENTITY"):
+            raise OAuthStatePersistenceError("Database is required for OAuth state nonce persistence in production.")
 
         return token
 
@@ -122,7 +131,7 @@ class OAuthStateManager:
             raise OAuthStateError("Malformed OAuth state token claims.")
 
         # Replay protection check
-        # 1. Database check (primary in production)
+        # 1. Database check (mandatory in production when database is configured)
         db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
         if db_url:
             try:
@@ -142,11 +151,15 @@ class OAuthStateManager:
             except OAuthStateError:
                 raise
             except Exception as e:
-                logger.warning(f"Database nonce check failed, falling back to in-memory check: {e}")
-
-        # 2. In-memory check
-        mem_entry = self._nonces.get(nonce)
-        if mem_entry:
+                logger.error(f"Database nonce consumption failed: {e}")
+                raise OAuthStatePersistenceError(f"Failed to durably consume OAuth state nonce: {e}") from e
+        elif settings.APP_ENV != "development" and not os.getenv("THREAD_ALLOW_OFFLINE_IDENTITY"):
+            raise OAuthStatePersistenceError("Database is required for OAuth state nonce validation in production.")
+        else:
+            # 2. In-memory check for offline development/test mode only
+            mem_entry = self._nonces.get(nonce)
+            if not mem_entry:
+                raise OAuthStateError("OAuth state token nonce is invalid or unknown.")
             if mem_entry["consumed_at"] is not None:
                 raise OAuthStateError("OAuth state token has already been consumed.")
             mem_entry["consumed_at"] = datetime.now(timezone.utc)
@@ -171,10 +184,9 @@ class GitHubOAuthClient:
 
     def get_authorization_url(
         self,
-        state: str,
-        redirect_uri: Optional[str] = None
+        state: str
     ) -> str:
-        """Builds GitHub OAuth authorization redirect URL."""
+        """Builds GitHub OAuth authorization redirect URL using GITHUB_OAUTH_REDIRECT_URI."""
         client_id = settings.github_client_id
         if not client_id:
             raise GitHubOAuthError(
@@ -182,7 +194,7 @@ class GitHubOAuthClient:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-        uri = redirect_uri or settings.github_oauth_redirect_uri
+        uri = settings.github_oauth_redirect_uri
         params = {
             "client_id": client_id,
             "state": state,
@@ -196,8 +208,7 @@ class GitHubOAuthClient:
 
     def exchange_code_for_token(
         self,
-        code: str,
-        redirect_uri: Optional[str] = None
+        code: str
     ) -> str:
         """
         Exchanges temporary OAuth authorization code for GitHub access token.
@@ -216,7 +227,7 @@ class GitHubOAuthClient:
             "client_secret": client_secret,
             "code": code
         }
-        uri = redirect_uri or settings.github_oauth_redirect_uri
+        uri = settings.github_oauth_redirect_uri
         if uri:
             payload["redirect_uri"] = uri
 

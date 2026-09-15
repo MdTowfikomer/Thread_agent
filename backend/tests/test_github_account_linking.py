@@ -369,3 +369,175 @@ def test_identity_audit_log_endpoint_requires_organizer():
     )
     assert resp_org.status_code == 200
     assert "audit_events" in resp_org.json()
+
+
+# =========================================================================
+# 6. Multi-Worker & Fail-Closed Security Hardening Tests
+# =========================================================================
+
+def test_oauth_nonce_persistence_fails_closed_on_db_error(monkeypatch):
+    """
+    P1 Verification:
+    If database write fails while recording an OAuth nonce, the endpoint must fail closed
+    with HTTP 500 and NEVER fall back to local memory.
+    """
+    token = make_member_token("usr_student_rohan")
+    # Generate valid state before setting mock DB URL
+    valid_state = oauth_state_manager.generate_state_token("usr_student_rohan", "gdg_mcet")
+
+    monkeypatch.setenv("SUPABASE_DB_URL", "postgresql://mock:mock@localhost:5432/mockdb")
+
+    with patch("psycopg2.connect", side_effect=RuntimeError("PostgreSQL connection refused")):
+        resp = client.get(
+            "/api/identity/github/connect",
+            headers={"Authorization": f"Bearer {token}"}
+        )
+        assert resp.status_code == 500
+        assert "Failed to durably record OAuth state nonce" in resp.json()["detail"]
+
+    # Similarly for callback nonce consumption
+    with patch("psycopg2.connect", side_effect=RuntimeError("PostgreSQL connection refused")):
+        resp_cb = client.get(f"/api/identity/github/callback?code=mock_code&state={valid_state}")
+        assert resp_cb.status_code == 500
+        assert "Failed to durably consume OAuth state nonce" in resp_cb.json()["detail"]
+
+def test_browser_cannot_override_redirect_uri():
+    """
+    Asserts that redirect_uri is NOT accepted from query params, and only
+    GITHUB_OAUTH_REDIRECT_URI from server settings is used in the authorization URL.
+    """
+    token = make_member_token("usr_student_rohan")
+    resp = client.get(
+        "/api/identity/github/connect?redirect_uri=https://attacker-steals-token.com/callback",
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    assert resp.status_code == 200
+    auth_url = resp.json()["authorization_url"]
+    assert "attacker-steals-token.com" not in auth_url
+    assert "https%3A%2F%2Fthread.local%2Fapi%2Fidentity%2Fgithub%2Fcallback" in auth_url
+
+def test_two_independent_service_instances_prevent_account_reassignment_across_workers(monkeypatch):
+    """
+    P0 Verification:
+    Two independent CrossChannelIdentityService instances (simulating two API worker processes)
+    cannot reassign an already active GitHub account to another person.
+    Worker B has an empty in-memory cache, but the PostgreSQL SELECT ... FOR UPDATE transaction
+    detects the existing active row and raises AccountAlreadyLinkedError (HTTP 409).
+    """
+    from app.identity.service import CrossChannelIdentityService, AccountAlreadyLinkedError
+    
+    mock_db_table = {}
+
+    class MockCursor:
+        def __init__(self):
+            self._last_result = None
+
+        def execute(self, query, params=None):
+            q = query.strip()
+            if "SELECT person_id, is_active" in q:
+                key = (params[0], params[1], params[2])
+                if key in mock_db_table:
+                    row = mock_db_table[key]
+                    self._last_result = (row["person_id"], row["is_active"])
+                else:
+                    self._last_result = None
+            elif "INSERT INTO channel_account_links" in q:
+                key = (params[1], params[3], params[4])
+                mock_db_table[key] = {
+                    "id": params[0],
+                    "organization_id": params[1],
+                    "person_id": params[2],
+                    "channel_type": params[3],
+                    "account_id": params[4],
+                    "is_active": params[12],
+                    "is_verified": params[11]
+                }
+            elif "UPDATE channel_account_links SET" in q:
+                key = (params[12], params[13], params[14])
+                if key in mock_db_table:
+                    mock_db_table[key]["person_id"] = params[0]
+                    mock_db_table[key]["is_active"] = params[8]
+                    mock_db_table[key]["is_verified"] = params[7]
+
+        def fetchone(self):
+            return self._last_result
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    class MockConnection:
+        def cursor(self):
+            return MockCursor()
+
+        def commit(self):
+            pass
+
+        def rollback(self):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    monkeypatch.setenv("SUPABASE_DB_URL", "postgresql://mock:mock@localhost:5432/mockdb")
+    monkeypatch.setattr("psycopg2.connect", lambda *a, **kw: MockConnection())
+
+    # Worker A
+    worker_a = CrossChannelIdentityService()
+    worker_a.clear()
+
+    # Worker B (simulating another process, separate memory)
+    worker_b = CrossChannelIdentityService()
+    worker_b.clear()
+
+    # 1. Worker A links account 778899 to usr_alice
+    worker_a.link_account(
+        organization_id="gdg_mcet",
+        person_id="usr_alice",
+        channel_type=ChannelType.GITHUB,
+        account_id="778899",
+        username="alice-dev",
+        link_type=LinkVerificationType.OAUTH_VERIFIED,
+        confidence=1.0
+    )
+
+    # Assert Worker A has it in memory
+    assert "gdg_mcet:github:778899" in worker_a._account_links
+    # Assert Worker B has empty memory
+    assert "gdg_mcet:github:778899" not in worker_b._account_links
+
+    # 2. Worker B attempts to link account 778899 to usr_bob
+    # Must fail closed with AccountAlreadyLinkedError based on PostgreSQL row lock
+    with pytest.raises(AccountAlreadyLinkedError) as exc_info:
+        worker_b.link_account(
+            organization_id="gdg_mcet",
+            person_id="usr_bob",
+            channel_type=ChannelType.GITHUB,
+            account_id="778899",
+            username="bob-dev",
+            link_type=LinkVerificationType.OAUTH_VERIFIED,
+            confidence=1.0
+        )
+    assert "already actively linked to person 'usr_alice'" in str(exc_info.value)
+
+    # 3. Revoke active link
+    mock_db_table[("gdg_mcet", "github", "778899")]["is_active"] = False
+
+    # 4. Now Worker B attempts to link account 778899 to usr_bob -> succeeds!
+    link_b = worker_b.link_account(
+        organization_id="gdg_mcet",
+        person_id="usr_bob",
+        channel_type=ChannelType.GITHUB,
+        account_id="778899",
+        username="bob-dev",
+        link_type=LinkVerificationType.OAUTH_VERIFIED,
+        confidence=1.0
+    )
+    assert link_b.person_id == "usr_bob"
+    assert link_b.is_active is True
+

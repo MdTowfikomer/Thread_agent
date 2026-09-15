@@ -40,6 +40,10 @@ class IdentityPersistenceError(RuntimeError):
     """Raised when durable identity persistence fails or is not configured in production."""
     pass
 
+class AccountAlreadyLinkedError(Exception):
+    """Raised when an account is actively linked to another person in the same organization."""
+    pass
+
 class CrossChannelIdentityService:
     """
     Authoritative Cross-Channel Identity Mapping Service.
@@ -176,10 +180,18 @@ class CrossChannelIdentityService:
             revoked_by=None
         )
 
-        # 1. Durable database persistence FIRST (fail closed)
+        # 0. Check in-memory link state as well (for offline / instant worker check)
+        existing_mem = self._account_links.get(key)
+        if existing_mem and existing_mem.is_active and existing_mem.person_id != person_id:
+            raise AccountAlreadyLinkedError(
+                f"Conflict: Account '{account_id}' ({channel_type.value}) in organization '{organization_id}' "
+                f"is already actively linked to person '{existing_mem.person_id}'."
+            )
+
+        # 1. Durable database persistence FIRST (fail closed with row-locking)
         try:
             self._persist_link_to_db(link, is_bootstrap=is_bootstrap)
-        except IdentityPersistenceError:
+        except (IdentityPersistenceError, AccountAlreadyLinkedError):
             raise
         except Exception as e:
             raise IdentityPersistenceError(f"Failed to persist identity link to durable database: {e}") from e
@@ -210,8 +222,10 @@ class CrossChannelIdentityService:
     def _persist_link_to_db(self, link: ChannelAccountLink, is_bootstrap: bool = False):
         """
         Persists channel account link to PostgreSQL database.
+        Locks the (organization_id, channel_type, account_id) row in a single atomic transaction.
+        Permits update only when it belongs to the same person or is inactive/revoked;
+        otherwise raises AccountAlreadyLinkedError (fail-closed, maps to HTTP 409).
         Fails closed: raises IdentityPersistenceError if durable write fails.
-        In-memory fallback is restricted to explicitly offline development/test mode.
         """
         import os
         import json
@@ -231,35 +245,77 @@ class CrossChannelIdentityService:
             import psycopg2
             with psycopg2.connect(db_url) as conn:
                 with conn.cursor() as cur:
+                    # Single atomic transaction: lock existing row if present across all workers
                     cur.execute("""
-                        INSERT INTO channel_account_links (
-                            id, organization_id, person_id, channel_type, account_id,
-                            username, display_name, email, link_type, confidence,
-                            evidence, is_verified, is_active, revoked_at, revoked_by, linked_at
-                        ) VALUES (
-                            %s, %s, %s, %s, %s,
-                            %s, %s, %s, %s, %s,
-                            %s::jsonb, %s, %s, %s, %s, %s
-                        )
-                        ON CONFLICT (organization_id, channel_type, account_id) DO UPDATE SET
-                            person_id = EXCLUDED.person_id,
-                            username = EXCLUDED.username,
-                            display_name = EXCLUDED.display_name,
-                            email = EXCLUDED.email,
-                            link_type = EXCLUDED.link_type,
-                            confidence = EXCLUDED.confidence,
-                            evidence = EXCLUDED.evidence,
-                            is_verified = EXCLUDED.is_verified,
-                            is_active = EXCLUDED.is_active,
-                            revoked_at = EXCLUDED.revoked_at,
-                            revoked_by = EXCLUDED.revoked_by,
-                            linked_at = EXCLUDED.linked_at;
-                    """, (
-                        link.id, link.organization_id, link.person_id, link.channel_type.value, link.account_id,
-                        link.username, link.display_name, link.email, link.link_type.value, link.confidence,
-                        json.dumps(link.evidence), link.is_verified, link.is_active, link.revoked_at, link.revoked_by, link.linked_at
-                    ))
+                        SELECT person_id, is_active
+                        FROM channel_account_links
+                        WHERE organization_id = %s AND channel_type = %s AND account_id = %s
+                        FOR UPDATE;
+                    """, (link.organization_id, link.channel_type.value, link.account_id))
+                    existing = cur.fetchone()
+
+                    if existing:
+                        existing_person_id, existing_is_active = existing
+                        # If active link already belongs to a DIFFERENT person, REJECT with conflict
+                        if existing_is_active and existing_person_id != link.person_id:
+                            raise AccountAlreadyLinkedError(
+                                f"Conflict: Account '{link.account_id}' ({link.channel_type.value}) in organization "
+                                f"'{link.organization_id}' is already actively linked to person '{existing_person_id}'."
+                            )
+
+                        # Permitted: update existing row (same person or reactivating inactive/revoked link)
+                        cur.execute("""
+                            UPDATE channel_account_links SET
+                                person_id = %s,
+                                username = %s,
+                                display_name = %s,
+                                email = %s,
+                                link_type = %s,
+                                confidence = %s,
+                                evidence = %s::jsonb,
+                                is_verified = %s,
+                                is_active = %s,
+                                revoked_at = %s,
+                                revoked_by = %s,
+                                linked_at = %s
+                            WHERE organization_id = %s AND channel_type = %s AND account_id = %s;
+                        """, (
+                            link.person_id,
+                            link.username,
+                            link.display_name,
+                            link.email,
+                            link.link_type.value,
+                            link.confidence,
+                            json.dumps(link.evidence),
+                            link.is_verified,
+                            link.is_active,
+                            link.revoked_at,
+                            link.revoked_by,
+                            link.linked_at,
+                            link.organization_id,
+                            link.channel_type.value,
+                            link.account_id
+                        ))
+                    else:
+                        # Row does not exist yet: insert new link
+                        cur.execute("""
+                            INSERT INTO channel_account_links (
+                                id, organization_id, person_id, channel_type, account_id,
+                                username, display_name, email, link_type, confidence,
+                                evidence, is_verified, is_active, revoked_at, revoked_by, linked_at
+                            ) VALUES (
+                                %s, %s, %s, %s, %s,
+                                %s, %s, %s, %s, %s,
+                                %s::jsonb, %s, %s, %s, %s, %s
+                            );
+                        """, (
+                            link.id, link.organization_id, link.person_id, link.channel_type.value, link.account_id,
+                            link.username, link.display_name, link.email, link.link_type.value, link.confidence,
+                            json.dumps(link.evidence), link.is_verified, link.is_active, link.revoked_at, link.revoked_by, link.linked_at
+                        ))
                 conn.commit()
+        except AccountAlreadyLinkedError:
+            raise
         except Exception as e:
             logger.error(f"Durable database identity link persistence failure: {e}")
             raise IdentityPersistenceError(f"Failed to persist identity link to durable database: {e}") from e

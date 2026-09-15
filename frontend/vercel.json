@@ -5,13 +5,17 @@
   "crons": [
     {
       "path": "/api/keep-render-awake",
-      "schedule": "*/10 * * * *"
+      "schedule": "0 0 * * *"
     }
   ],
   "rewrites": [
     {
+      "source": "/api/keep-render-awake",
+      "destination": "/api/keep-render-awake"
+    },
+    {
       "source": "/api/(.*)",
-      "destination": "/api/$1"
+      "destination": "https://thread-agent.onrender.com/api/$1"
     },
     {
       "source": "/((?!api/).*)",

@@ -21,7 +21,7 @@ export default async function handler(req, res) {
     });
   }
 
-  const renderUrl = process.env.RENDER_SERVICE_URL || 'https://thread-agent-api.onrender.com';
+  const renderUrl = process.env.RENDER_SERVICE_URL || 'https://thread-agent.onrender.com';
   const healthEndpoint = `${renderUrl.replace(/\/+$/, '')}/health`;
 
   try {

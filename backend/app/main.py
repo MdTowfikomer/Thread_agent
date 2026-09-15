@@ -10,7 +10,7 @@ from app.core.canonical import PermissionLevel
 from app.data.seeds import get_seed_data
 from app.memory.store import memory_store
 from app.memory.repository import memory_repository
-from app.channels.gateway import discord_gateway_bot
+from app.channels.gateway import discord_gateway_bot, try_acquire_gateway_advisory_lock, release_gateway_advisory_lock
 from app.channels.installation import guild_installation_store, telegram_binding_store, slack_binding_store, github_binding_store
 from app.identity.service import identity_service
 from app.api.chat import router as chat_router
@@ -21,22 +21,43 @@ from app.api.delivery import router as delivery_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Enforce production security checks at startup
+    # 1. Enforce production security checks at startup
     settings.validate_production_security()
 
-    # Startup: Ingest initial organizational context via Source Adapters
-    records, chunks, receipts = get_seed_data()
-    memory_repository.save_records_and_chunks(records, chunks)
-    print(f"[Thread Memory Core v0] Initialized with {len(chunks)} chunks from {len(records)} source records.")
+    # 2. Startup: Ingest test fixtures ONLY in local development when explicitly enabled.
+    # NEVER inject synthetic/mock data in production or render demo mode.
+    if settings.is_development and os.getenv("THREAD_SEED_DEV_DATA", "false").lower() in ("true", "1"):
+        records, chunks, receipts = get_seed_data()
+        memory_repository.save_records_and_chunks(records, chunks)
+        print(f"[Thread Memory Core v0] Initialized dev fixtures with {len(chunks)} chunks from {len(records)} source records.")
 
-    # Optional controlled single background gateway task for local demo mode ONLY (development)
-    if settings.is_development and settings.discord_bot_token and os.getenv("THREAD_START_GATEWAY_BOT", "false").lower() in ("true", "1"):
+    # 3. Discord Gateway Lifecycle:
+    # Mode A: render_free_demo - single Uvicorn worker instance under PostgreSQL session advisory lock.
+    # Mode B: local development demo - background task if THREAD_START_GATEWAY_BOT=true.
+    # Mode C: standard production - dedicated worker process (run_gateway.py) enforced by validate_production_security.
+    gateway_lock_conn = None
+    if settings.is_render_free_demo and settings.discord_bot_token and os.getenv("THREAD_START_GATEWAY_BOT", "false").lower() in ("true", "1"):
+        web_concurrency = int(os.getenv("WEB_CONCURRENCY", "1"))
+        if web_concurrency > 1:
+            raise RuntimeError(
+                f"Configuration Error: render_free_demo requires exactly 1 worker (WEB_CONCURRENCY=1), but found {web_concurrency}."
+            )
+        gateway_lock_conn = try_acquire_gateway_advisory_lock()
+        if gateway_lock_conn:
+            print("[Discord Gateway] Acquired advisory lock. Launching background Gateway worker (render_free_demo leader)...")
+            discord_gateway_bot.start_background()
+        else:
+            print("[Discord Gateway] Advisory lock held by peer instance. Running API in standby for Discord Gateway.")
+    elif settings.is_development and settings.discord_bot_token and os.getenv("THREAD_START_GATEWAY_BOT", "false").lower() in ("true", "1"):
         print("[Discord Gateway] Launching single-worker background connector task (development demo)...")
         discord_gateway_bot.start_background()
 
     yield
+
     if discord_gateway_bot._running:
         await discord_gateway_bot.stop()
+    if gateway_lock_conn:
+        release_gateway_advisory_lock(gateway_lock_conn)
     print("[Thread Core] Shutting down.")
 
 app = FastAPI(
@@ -65,19 +86,8 @@ app.include_router(delivery_router, prefix=settings.API_PREFIX)
 
 @app.get("/health")
 def health_check():
-    return {
-        "status": "healthy",
-        "service": "Thread Context Reconstruction Engine",
-        "version": settings.VERSION,
-        "app_env": settings.APP_ENV,
-        "demo_auth_enabled": settings.demo_auth_enabled,
-        "cors_origins": settings.allowed_origins,
-        "providers": {
-            "gemini": settings.has_gemini,
-            "openai": settings.has_openai,
-            "supabase": settings.has_supabase
-        }
-    }
+    """Minimal liveness health probe. Zero information disclosure in production."""
+    return {"status": "healthy"}
 
 @app.get(f"{settings.API_PREFIX}/workspace")
 def get_current_workspace(organization_id: str = "gdg_mcet"):

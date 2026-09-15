@@ -1,0 +1,49 @@
+services:
+  - type: web
+    name: thread-agent-api
+    env: python
+    plan: free
+    region: oregon
+    buildCommand: pip install --upgrade pip && pip install -r backend/requirements.txt
+    startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
+    autoDeploy: false
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: APP_ENV
+        value: render_free_demo
+      - key: THREAD_DEPLOYMENT_MODE
+        value: render_free_demo
+      - key: THREAD_START_GATEWAY_BOT
+        value: "true"
+      - key: WEB_CONCURRENCY
+        value: "1"
+      - key: DISCORD_ENABLE_MESSAGE_CONTENT_INTENT
+        value: "true"
+      - key: THREAD_DEMO_AUTH_ENABLED
+        value: "false"
+      - key: THREAD_ALLOW_GUEST_MODE
+        value: "false"
+      - key: THREAD_JWT_SECRET
+        sync: false
+      - key: GITHUB_WEBHOOK_SECRET
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_DB_URL
+        sync: false
+      - key: DISCORD_BOT_TOKEN
+        sync: false
+      - key: DISCORD_PUBLIC_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: SLACK_BOT_TOKEN
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: ALLOWED_ORIGINS
+        value: "https://thread-agent.vercel.app,http://localhost:5173"

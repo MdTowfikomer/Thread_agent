@@ -84,6 +84,11 @@
       "sha256": "b22a897d1fa1e739e9a6f314477d8b93982469e1373060ae1551c5a8da70467e",
       "status": "frozen",
       "description": "Harden community tables with FORCE RLS, revoke untrusted access, and upgrade account link tokens to 256-bit hashed atomic schema"
+    },
+    "017_purge_fixture_source_records": {
+      "sha256": "2ccb2bd35b53b72449e4d66a989151df9ac09a221615995d600ca690a036b532",
+      "status": "frozen",
+      "description": "Purge fixture seed records and associated retrieval chunks from organizational memory"
     }
   }
 }

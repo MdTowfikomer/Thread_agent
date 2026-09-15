@@ -320,3 +320,48 @@ class DiscordGatewayBot:
             self._task.cancel()
 
 discord_gateway_bot = DiscordGatewayBot()
+
+DISCORD_GATEWAY_ADVISORY_LOCK_ID = 1414025812
+
+
+def try_acquire_gateway_advisory_lock() -> Optional[Any]:
+    """
+    Attempt to acquire non-blocking PostgreSQL session advisory lock for Discord Gateway.
+    Guarantees that across Render horizontal restarts or zero-downtime overlaps,
+    only a single worker process connects to Discord Gateway.
+    Returns the database connection holding the lock, or None if unavailable/held by peer.
+    """
+    db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+    if not db_url:
+        logger.warning("[Discord Gateway] No database URL available to acquire advisory lock.")
+        return None
+    try:
+        import psycopg2
+        conn = psycopg2.connect(db_url)
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_try_advisory_lock(%s);", (DISCORD_GATEWAY_ADVISORY_LOCK_ID,))
+            row = cur.fetchone()
+            acquired = row[0] if row else False
+            if acquired:
+                logger.info(f"[Discord Gateway] Acquired PostgreSQL advisory lock ({DISCORD_GATEWAY_ADVISORY_LOCK_ID}). Process is Gateway leader.")
+                return conn
+            else:
+                logger.warning(f"[Discord Gateway] Advisory lock ({DISCORD_GATEWAY_ADVISORY_LOCK_ID}) is held by another worker. Standby mode.")
+                conn.close()
+                return None
+    except Exception as e:
+        logger.error(f"[Discord Gateway] Error checking advisory lock: {e}")
+        return None
+
+
+def release_gateway_advisory_lock(conn: Any) -> None:
+    """Release PostgreSQL advisory lock and close the leader connection."""
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT pg_advisory_unlock(%s);", (DISCORD_GATEWAY_ADVISORY_LOCK_ID,))
+            conn.close()
+            logger.info(f"[Discord Gateway] Released PostgreSQL advisory lock ({DISCORD_GATEWAY_ADVISORY_LOCK_ID}).")
+        except Exception as e:
+            logger.warning(f"[Discord Gateway] Error releasing advisory lock: {e}")

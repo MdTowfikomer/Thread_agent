@@ -53,6 +53,12 @@ class Settings:
     def is_development(self) -> bool:
         return os.getenv("APP_ENV", "production").lower() == "development"
 
+    @property
+    def is_render_free_demo(self) -> bool:
+        mode = os.getenv("THREAD_DEPLOYMENT_MODE", "").strip().lower()
+        app_env = os.getenv("APP_ENV", "").strip().lower()
+        return mode == "render_free_demo" or app_env == "render_free_demo"
+
     # Default THREAD_JWT_SECRET has been strictly removed
     @property
     def jwt_secret(self) -> str:
@@ -83,7 +89,9 @@ class Settings:
                     "Security Startup Failure: THREAD_JWT_SECRET is set to a known development or default value. "
                     "You must provide a unique, cryptographically secure production key."
                 )
-            if os.getenv("THREAD_START_GATEWAY_BOT", "false").lower() in ("true", "1"):
+            # Normal production strictly forbids THREAD_START_GATEWAY_BOT; dedicated worker process required.
+            # render_free_demo mode permits running Gateway inside single-instance web service under advisory lock.
+            if os.getenv("THREAD_START_GATEWAY_BOT", "false").lower() in ("true", "1") and not self.is_render_free_demo:
                 raise RuntimeError(
                     "Security Startup Failure: THREAD_START_GATEWAY_BOT is strictly development-only. "
                     "In production, running the Gateway bot inside FastAPI API workers causes duplicate connections; "

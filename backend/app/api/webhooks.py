@@ -276,7 +276,7 @@ async def github_webhook(request: Request):
     3. Replay protection (deduplicates X-GitHub-Delivery).
     4. Durable transactional persistence via memory_repository.
     """
-    from app.channels.github import github_connector, verify_github_signature
+    from app.channels.github import github_connector, verify_github_signature, SUPPORTED_GITHUB_EVENTS
 
     # 1. Unconditional signature enforcement
     secret = settings.github_webhook_secret
@@ -368,14 +368,31 @@ async def github_webhook(request: Request):
                 detail=message or f"Cannot process delivery {delivery_id}."
             )
 
+    # Check if event is intentionally unsupported / ignored
+    if event_type not in SUPPORTED_GITHUB_EVENTS:
+        logger.info(f"Ignoring unsupported GitHub event '{event_type}' for delivery {delivery_id}.")
+        webhook_delivery_store.mark_completed(delivery_id)
+        return {
+            "status": "ignored",
+            "event_type": event_type,
+            "delivery_id": delivery_id,
+            "organization_id": org_id,
+            "records_count": 0,
+            "chunks_count": 0,
+            "message": f"Event '{event_type}' is intentionally ignored."
+        }
+
     # 6. Parse and transactionally persist events
     try:
         try:
             events = github_connector.parse_webhook_payload(event_type, payload, org_id)
         except Exception as e:
-            logger.warning(f"Error parsing GitHub event '{event_type}': {e}")
+            logger.error(f"Error parsing supported GitHub event '{event_type}' for delivery {delivery_id}: {e}")
             webhook_delivery_store.mark_failed(delivery_id, f"Parse error: {e}")
-            return {"status": "skipped", "reason": str(e), "event_type": event_type}
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Malformed or unparseable payload for supported event '{event_type}': {e}"
+            )
 
         ingested_records = []
         ingested_chunks = []

@@ -548,6 +548,109 @@ def test_github_webhook_transient_failure_allows_retry_without_event_loss(monkey
     assert data2["records_count"] == 1
     assert webhook_delivery_store.get_delivery_status(delivery_id) == "completed"
 
+def test_github_webhook_malformed_supported_event_returns_500_and_succeeds_on_retry(monkeypatch):
+    """
+    P1 Verification:
+    A malformed payload for a supported event must return 500 (non-2xx) so GitHub retries.
+    When the fault is corrected, retrying with the SAME delivery ID must succeed.
+    """
+    secret = "test_webhook_secret_key_32_bytes_long!"
+    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", secret)
+    webhook_delivery_store.clear()
+
+    # Malformed payload: invalid timestamp triggers ValueError in parse_iso_datetime
+    bad_payload = {
+        "action": "opened",
+        "repository": {
+            "id": 1029384,
+            "full_name": "gdgmcet/core-platform",
+            "private": False
+        },
+        "pull_request": {
+            "number": 101,
+            "title": "feat: malformed parse check",
+            "body": "Checking retry on parse error.",
+            "user": {"id": 583231, "login": "arjun-dev"},
+            "created_at": "this-is-not-a-valid-timestamp"  # Corrupted!
+        }
+    }
+    bad_body = json.dumps(bad_payload).encode("utf-8")
+    delivery_id = f"del_parse_err_{uuid.uuid4().hex[:12]}"
+
+    # Attempt 1: Malformed payload must return non-2xx (500)
+    resp1 = client.post(
+        "/api/webhooks/github",
+        content=bad_body,
+        headers={
+            "X-GitHub-Event": "pull_request",
+            "X-GitHub-Delivery": delivery_id,
+            "X-Hub-Signature-256": make_github_signature(bad_body, secret),
+            "Content-Type": "application/json"
+        }
+    )
+    assert resp1.status_code == 500
+    assert "Malformed or unparseable payload" in resp1.json()["detail"]
+    assert webhook_delivery_store.get_delivery_status(delivery_id) == "failed"
+
+    # Attempt 2: Fault removed, GitHub retries with the SAME delivery ID
+    fixed_payload = dict(bad_payload)
+    fixed_payload["pull_request"] = dict(bad_payload["pull_request"])
+    fixed_payload["pull_request"]["created_at"] = "2026-09-15T00:00:00Z"
+    fixed_body = json.dumps(fixed_payload).encode("utf-8")
+
+    resp2 = client.post(
+        "/api/webhooks/github",
+        content=fixed_body,
+        headers={
+            "X-GitHub-Event": "pull_request",
+            "X-GitHub-Delivery": delivery_id,
+            "X-Hub-Signature-256": make_github_signature(fixed_body, secret),
+            "Content-Type": "application/json"
+        }
+    )
+    assert resp2.status_code == 200
+    data2 = resp2.json()
+    assert data2["status"] == "ingested"
+    assert data2["records_count"] == 1
+    assert webhook_delivery_store.get_delivery_status(delivery_id) == "completed"
+
+def test_github_webhook_unsupported_event_returns_200_ignored_and_completed(monkeypatch):
+    """
+    Intentionally unsupported events (e.g. 'ping', 'watch', 'star') must be marked
+    'completed' and return 200 ignored so GitHub does not retry.
+    """
+    secret = "test_webhook_secret_key_32_bytes_long!"
+    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", secret)
+    webhook_delivery_store.clear()
+
+    payload = {
+        "zen": "Non-blocking is better than blocking.",
+        "hook_id": 123456,
+        "repository": {
+            "id": 1029384,
+            "full_name": "gdgmcet/core-platform",
+            "private": False
+        }
+    }
+    body = json.dumps(payload).encode("utf-8")
+    delivery_id = f"del_unsupported_{uuid.uuid4().hex[:12]}"
+
+    resp = client.post(
+        "/api/webhooks/github",
+        content=body,
+        headers={
+            "X-GitHub-Event": "ping",  # Unsupported event
+            "X-GitHub-Delivery": delivery_id,
+            "X-Hub-Signature-256": make_github_signature(body, secret),
+            "Content-Type": "application/json"
+        }
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ignored"
+    assert "intentionally ignored" in data["message"]
+    assert webhook_delivery_store.get_delivery_status(delivery_id) == "completed"
+
 def test_github_webhook_delivery_ledger_database_failure_fails_closed(monkeypatch):
     """
     P1 Verification:

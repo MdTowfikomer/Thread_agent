@@ -195,7 +195,10 @@ class WebhookDeliveryStore:
                         """, (DeliveryStatus.FAILED.value, str(error_message)[:1000], delivery_id))
                     conn.commit()
             except Exception as e:
-                logger.error(f"Failed to mark delivery {delivery_id} failed in DB: {e}")
+                logger.critical(
+                    f"OPERATIONAL ALERT: Failed to update delivery ledger status to 'failed' for {delivery_id} in DB: {e}. "
+                    f"Original processing error: {error_message}. Delivery will remain in 'processing' until stale timeout expires."
+                )
 
         if delivery_id in self._deliveries:
             self._deliveries[delivery_id]["status"] = DeliveryStatus.FAILED

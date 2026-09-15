@@ -78,6 +78,15 @@ class GitHubEvent(BaseModel):
     diff_summary: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
+SUPPORTED_GITHUB_EVENTS = {
+    "pull_request",
+    "pull_request_review",
+    "issue_comment",
+    "pull_request_review_comment",
+    "issues",
+    "push"
+}
+
 class GitHubConnector:
     """
     Authoritative GitHub Channel Connector.

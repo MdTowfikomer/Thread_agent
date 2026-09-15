@@ -1,4 +1,5 @@
 import os
+import json
 import uuid
 from typing import Dict, Optional, List, Any
 from datetime import datetime, timezone
@@ -199,6 +200,282 @@ class GitHubRepositoryBindingStore:
 github_binding_store = GitHubRepositoryBindingStore()
 
 
+# =====================================================================
+# TELEGRAM CHAT BINDINGS
+# =====================================================================
+
+class TelegramChatBinding(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    organization_id: str
+    chat_id: str
+    chat_title: Optional[str] = None
+    chat_type: Optional[str] = None  # "group", "supergroup", "channel", "private"
+    is_active: bool = True
+    bound_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TelegramChatBindingStore:
+    """
+    Server-owned authoritative repository mapping Telegram chat IDs to Thread organizations.
+    Resolves chat_id -> organization_id securely.
+    Rejects any caller or payload attempts to override the organization boundary.
+    """
+    def __init__(self):
+        self._bindings_by_id: Dict[str, TelegramChatBinding] = {}
+        self._load_from_database()
+
+    def _load_from_database(self):
+        db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+        if not db_url:
+            return
+        import psycopg2
+        with psycopg2.connect(db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id, organization_id, chat_id, chat_title, chat_type, is_active, bound_at, metadata FROM telegram_chat_bindings;")
+                for row in cur.fetchall():
+                    self._bindings_by_id[str(row[2])] = TelegramChatBinding(
+                        id=row[0], organization_id=row[1], chat_id=str(row[2]),
+                        chat_title=row[3], chat_type=row[4], is_active=row[5],
+                        bound_at=row[6], metadata=row[7] or {}
+                    )
+
+    def register_binding(
+        self,
+        chat_id: str,
+        organization_id: str,
+        chat_title: Optional[str] = None,
+        chat_type: Optional[str] = None,
+        is_active: bool = True,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> TelegramChatBinding:
+        binding = TelegramChatBinding(
+            chat_id=str(chat_id).strip(),
+            organization_id=organization_id.strip(),
+            chat_title=chat_title.strip() if chat_title else None,
+            chat_type=chat_type.strip() if chat_type else None,
+            is_active=is_active,
+            metadata=metadata or {}
+        )
+        # Mirror to PostgreSQL if database URL is available
+        db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+        if db_url:
+            import psycopg2
+            with psycopg2.connect(db_url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                            INSERT INTO telegram_chat_bindings 
+                                (id, organization_id, chat_id, chat_title, chat_type, is_active, bound_at, metadata)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (chat_id) DO UPDATE SET
+                                organization_id = EXCLUDED.organization_id,
+                                chat_title = EXCLUDED.chat_title,
+                                chat_type = EXCLUDED.chat_type,
+                                is_active = EXCLUDED.is_active,
+                                metadata = EXCLUDED.metadata;
+                        """, (
+                            binding.id,
+                            binding.organization_id,
+                            binding.chat_id,
+                            binding.chat_title,
+                            binding.chat_type,
+                            binding.is_active,
+                            binding.bound_at,
+                            json.dumps(binding.metadata) if hasattr(binding, 'metadata') else '{}'
+                        ))
+                conn.commit()
+        elif os.getenv("APP_ENV", "production").lower() != "development" and os.getenv("THREAD_ALLOW_OFFLINE_BINDINGS") != "1":
+            raise RuntimeError("Durable Telegram bindings require SUPABASE_DB_URL in production.")
+
+        self._bindings_by_id[binding.chat_id] = binding
+        return binding
+
+    def get_organization_for_chat(self, chat_id: Optional[str]) -> Optional[str]:
+        if not chat_id:
+            return None
+        cid = str(chat_id).strip()
+        db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+        if db_url:
+            import psycopg2
+            with psycopg2.connect(db_url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT organization_id FROM telegram_chat_bindings WHERE chat_id = %s AND is_active = TRUE;", (cid,))
+                    row = cur.fetchone()
+                    return row[0] if row else None
+        b = self._bindings_by_id.get(cid)
+        if b and b.is_active:
+            return b.organization_id
+
+        return None
+
+    def get_binding(self, chat_id: str) -> Optional[TelegramChatBinding]:
+        cid = str(chat_id).strip()
+        db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+        if db_url:
+            import psycopg2
+            with psycopg2.connect(db_url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT id, organization_id, chat_id, chat_title, chat_type, is_active, bound_at, metadata FROM telegram_chat_bindings WHERE chat_id = %s;", (cid,))
+                    row = cur.fetchone()
+                    if row:
+                        return TelegramChatBinding(id=row[0], organization_id=row[1], chat_id=str(row[2]), chat_title=row[3], chat_type=row[4], is_active=row[5], bound_at=row[6], metadata=row[7] or {})
+                    return None
+        return self._bindings_by_id.get(cid)
+
+    def clear(self):
+        self._bindings_by_id.clear()
+
+telegram_binding_store = TelegramChatBindingStore()
+
+
+# =====================================================================
+# SLACK WORKSPACE BINDINGS
+# =====================================================================
+
+class SlackWorkspaceBinding(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    organization_id: str
+    team_id: str
+    team_domain: Optional[str] = None
+    is_active: bool = True
+    bound_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class SlackWorkspaceBindingStore:
+    """
+    Server-owned authoritative repository mapping Slack team/workspace IDs to Thread organizations.
+    Resolves team_id -> organization_id securely.
+    """
+    def __init__(self):
+        self._bindings_by_id: Dict[str, SlackWorkspaceBinding] = {}
+        self._load_from_database()
+
+    def _load_from_database(self):
+        db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+        if not db_url:
+            return
+        import psycopg2
+        with psycopg2.connect(db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id, organization_id, team_id, team_domain, is_active, bound_at, metadata FROM slack_workspace_bindings;")
+                for row in cur.fetchall():
+                    self._bindings_by_id[str(row[2])] = SlackWorkspaceBinding(
+                        id=row[0], organization_id=row[1], team_id=str(row[2]),
+                        team_domain=row[3], is_active=row[4], bound_at=row[5],
+                        metadata=row[6] or {}
+                    )
+
+    def register_binding(
+        self,
+        team_id: str,
+        organization_id: str,
+        team_domain: Optional[str] = None,
+        is_active: bool = True,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> SlackWorkspaceBinding:
+        binding = SlackWorkspaceBinding(
+            team_id=str(team_id).strip(),
+            organization_id=organization_id.strip(),
+            team_domain=team_domain.strip().lower() if team_domain else None,
+            is_active=is_active,
+            metadata=metadata or {}
+        )
+        # Mirror to PostgreSQL if database URL is available
+        db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+        if db_url:
+            import psycopg2
+            with psycopg2.connect(db_url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                            INSERT INTO slack_workspace_bindings 
+                                (id, organization_id, team_id, team_domain, is_active, bound_at, metadata)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (team_id) DO UPDATE SET
+                                organization_id = EXCLUDED.organization_id,
+                                team_domain = EXCLUDED.team_domain,
+                                is_active = EXCLUDED.is_active,
+                                metadata = EXCLUDED.metadata;
+                        """, (
+                            binding.id,
+                            binding.organization_id,
+                            binding.team_id,
+                            binding.team_domain,
+                            binding.is_active,
+                            binding.bound_at,
+                            json.dumps(binding.metadata) if hasattr(binding, 'metadata') else '{}'
+                        ))
+                conn.commit()
+        elif os.getenv("APP_ENV", "production").lower() != "development" and os.getenv("THREAD_ALLOW_OFFLINE_BINDINGS") != "1":
+            raise RuntimeError("Durable Slack bindings require SUPABASE_DB_URL in production.")
+
+        self._bindings_by_id[binding.team_id] = binding
+        return binding
+
+    def get_organization_for_team(self, team_id: Optional[str]) -> Optional[str]:
+        if not team_id:
+            return None
+        tid = str(team_id).strip()
+        db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+        if db_url:
+            import psycopg2
+            with psycopg2.connect(db_url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT organization_id FROM slack_workspace_bindings WHERE team_id = %s AND is_active = TRUE;", (tid,))
+                    row = cur.fetchone()
+                    return row[0] if row else None
+        b = self._bindings_by_id.get(tid)
+        if b and b.is_active:
+            return b.organization_id
+
+        return None
+
+    def get_binding(self, team_id: str) -> Optional[SlackWorkspaceBinding]:
+        tid = str(team_id).strip()
+        db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+        if db_url:
+            import psycopg2
+            with psycopg2.connect(db_url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT id, organization_id, team_id, team_domain, is_active, bound_at, metadata FROM slack_workspace_bindings WHERE team_id = %s;", (tid,))
+                    row = cur.fetchone()
+                    if row:
+                        return SlackWorkspaceBinding(id=row[0], organization_id=row[1], team_id=str(row[2]), team_domain=row[3], is_active=row[4], bound_at=row[5], metadata=row[6] or {})
+                    return None
+        return self._bindings_by_id.get(tid)
+
+    def get_binding_for_channel(self, channel_id: str) -> Optional[SlackWorkspaceBinding]:
+        cid = str(channel_id).strip()
+        db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+        if db_url:
+            import psycopg2
+            with psycopg2.connect(db_url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT id, organization_id, team_id, team_domain, is_active, bound_at, metadata FROM slack_workspace_bindings WHERE is_active=TRUE AND metadata->'channel_ids' ? %s LIMIT 1", (cid,))
+                    row = cur.fetchone()
+                    if row:
+                        return SlackWorkspaceBinding(id=row[0], organization_id=row[1], team_id=str(row[2]), team_domain=row[3], is_active=row[4], bound_at=row[5], metadata=row[6] or {})
+                    return None
+        for binding in self._bindings_by_id.values():
+            if binding.is_active and cid in {str(value) for value in binding.metadata.get("channel_ids", [])}:
+                return binding
+        return None
+
+    def get_organization_for_channel(self, team_id: str, channel_id: str) -> Optional[str]:
+        binding = self.get_binding(team_id)
+        if not binding or not binding.is_active:
+            return None
+        allowed_channels = binding.metadata.get("channel_ids", [])
+        if not allowed_channels or str(channel_id) not in {str(value) for value in allowed_channels}:
+            return None
+        return binding.organization_id
+
+    def clear(self):
+        self._bindings_by_id.clear()
+
+slack_binding_store = SlackWorkspaceBindingStore()
+
+
 if __name__ == "__main__":
     import argparse
     import sys
@@ -268,4 +545,3 @@ if __name__ == "__main__":
                 sys.exit(1)
         else:
             print(f"[SUCCESS] Removed repository binding for ID '{rid}' from memory.")
-

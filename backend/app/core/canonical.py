@@ -13,6 +13,7 @@ class SourceType(str, Enum):
     SLACK = "slack"
     DISCORD = "discord"
     GITHUB = "github"
+    TELEGRAM = "telegram"
     GDRIVE = "gdrive"
     NOTION = "notion"
     PDF = "pdf"

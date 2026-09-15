@@ -148,4 +148,29 @@ class Settings:
     def github_oauth_redirect_uri(self) -> str:
         return os.getenv("GITHUB_OAUTH_REDIRECT_URI", "").strip()
 
+    # Telegram Webhook & Bot Credentials
+    @property
+    def telegram_bot_token(self) -> str:
+        return os.getenv("THREAD_TELEGRAM_BOT_TOKEN", os.getenv("TELEGRAM_BOT_TOKEN", "")).strip()
+
+    @property
+    def telegram_webhook_secret(self) -> str:
+        return os.getenv("THREAD_TELEGRAM_WEBHOOK_SECRET", os.getenv("TELEGRAM_WEBHOOK_SECRET", "")).strip()
+
+    @property
+    def telegram_allowed_chat_ids(self) -> List[str]:
+        raw = os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", os.getenv("THREAD_TELEGRAM_ALLOWED_CHAT_IDS", "")).strip()
+        if not raw:
+            return []
+        return [cid.strip() for cid in raw.split(",") if cid.strip()]
+
+    # Slack Events API & Bot Credentials
+    @property
+    def slack_signing_secret(self) -> str:
+        return os.getenv("THREAD_SLACK_SIGNING_SECRET", os.getenv("SLACK_SIGNING_SECRET", "")).strip()
+
+    @property
+    def slack_bot_token(self) -> str:
+        return os.getenv("THREAD_SLACK_BOT_TOKEN", os.getenv("SLACK_BOT_TOKEN", "")).strip()
+
 settings = Settings()

@@ -59,6 +59,16 @@
       "sha256": "4bbb72815d13692428b8f2ec3b93311db65fafc27a103fd48c6d7db2e9cf9bbb",
       "status": "frozen",
       "description": "GitHub OAuth account linking, revocation tracking, identity audit log, and manual link requests"
+    },
+    "012_telegram_and_slack_bindings": {
+      "sha256": "a7cfa7dd44ff2f13faec8d32b4a2f2f2ad0c998b22529c9183de2643228589b0",
+      "status": "frozen",
+      "description": "Server-owned Telegram chat and Slack workspace binding tables with service-role-only access"
+    },
+    "013_outbound_message_deliveries": {
+      "sha256": "43485d6d99654f00ba986b10a0109bc1a86b503cdd0e66b1e61c0ddc19d9fa75",
+      "status": "frozen",
+      "description": "Transactional idempotent audit ledger for authorized outbound channel responses"
     }
   }
 }

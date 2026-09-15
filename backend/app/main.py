@@ -6,14 +6,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.organizations import WORKSPACES, get_workspace
 from app.core.auth import AuthenticatedPrincipal, get_current_principal
+from app.core.canonical import PermissionLevel
 from app.data.seeds import get_seed_data
 from app.memory.store import memory_store
 from app.memory.repository import memory_repository
 from app.channels.gateway import discord_gateway_bot
+from app.channels.installation import guild_installation_store, telegram_binding_store, slack_binding_store, github_binding_store
+from app.identity.service import identity_service
 from app.api.chat import router as chat_router
 from app.api.imports import router as imports_router
 from app.api.webhooks import router as webhooks_router
 from app.api.identity import router as identity_router
+from app.api.delivery import router as delivery_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -56,6 +60,7 @@ app.include_router(chat_router, prefix=settings.API_PREFIX)
 app.include_router(imports_router, prefix=settings.API_PREFIX)
 app.include_router(webhooks_router, prefix=settings.API_PREFIX)
 app.include_router(identity_router, prefix=settings.API_PREFIX)
+app.include_router(delivery_router, prefix=settings.API_PREFIX)
 
 
 @app.get("/health")
@@ -135,6 +140,78 @@ def list_memories(
         "count": len(items),
         "memories": items
     }
+
+@app.get(f"{settings.API_PREFIX}/connections")
+def list_connections(
+    organization_id: Optional[str] = None,
+    principal: AuthenticatedPrincipal = Depends(get_current_principal)
+):
+    """Expose server-owned connector bindings for the demo status screen."""
+    if organization_id is not None and organization_id != principal.organization_id:
+        raise HTTPException(status_code=403, detail="Cross-organization access is denied.")
+    organization_id = principal.organization_id
+    return {
+        "organization_id": organization_id,
+        "connections": {
+            "github": [
+                {"id": binding.repository_id, "label": binding.repository_name, "status": "bound"}
+                for binding in github_binding_store._bindings_by_id.values()
+                if binding.organization_id == organization_id and binding.is_active
+            ],
+            "discord": [
+                {"id": binding.guild_id, "label": binding.guild_name or binding.guild_id, "status": "bound"}
+                for binding in guild_installation_store._installations.values()
+                if binding.organization_id == organization_id and binding.is_active
+            ],
+            "telegram": [
+                {"id": binding.chat_id, "label": binding.chat_title or binding.chat_id, "status": "bound"}
+                for binding in telegram_binding_store._bindings_by_id.values()
+                if binding.organization_id == organization_id and binding.is_active
+            ],
+            "slack": [
+                {
+                    "id": binding.team_id,
+                    "label": binding.team_domain or binding.team_id,
+                    "channels": binding.metadata.get("channel_ids", []),
+                    "status": "bound",
+                }
+                for binding in slack_binding_store._bindings_by_id.values()
+                if binding.organization_id == organization_id and binding.is_active
+            ],
+        },
+    }
+
+@app.get(f"{settings.API_PREFIX}/review")
+def list_review_items(
+    organization_id: Optional[str] = None,
+    principal: AuthenticatedPrincipal = Depends(get_current_principal)
+):
+    """Return quarantine and unresolved identity evidence for the review panel."""
+    if organization_id is not None and organization_id != principal.organization_id:
+        raise HTTPException(status_code=403, detail="Cross-organization access is denied.")
+    if PermissionLevel.INTERNAL_CORE not in principal.access_context.allowed_scopes:
+        raise HTTPException(status_code=403, detail="Organizer access is required for review.")
+    organization_id = principal.organization_id
+    chunks = memory_repository.get_chunks_for_organization(organization_id)
+    quarantine = [
+        {
+            "id": chunk.id,
+            "source": chunk.source_type.value,
+            "title": chunk.title,
+            "author": chunk.author,
+            "content": chunk.content,
+            "provenance": chunk.provenance,
+        }
+        for chunk in chunks
+        if chunk.permission == PermissionLevel.PENDING_REVIEW
+    ]
+    links = [
+        link.model_dump()
+        for link in identity_service._account_links.values()
+        if link.organization_id == organization_id
+        if not link.is_verified and link.is_active
+    ]
+    return {"organization_id": organization_id, "quarantine": quarantine, "identity_links": links}
 
 if __name__ == "__main__":
     import uvicorn

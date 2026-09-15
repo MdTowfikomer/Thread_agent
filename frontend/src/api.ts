@@ -45,3 +45,15 @@ export async function getMemories(organizationId: string = 'gdg_mcet'): Promise<
   const data = await res.json();
   return data.memories || [];
 }
+
+export async function getConnections(organizationId: string = 'gdg_mcet'): Promise<any> {
+  const res = await fetch(`${API_BASE}/connections?organization_id=${organizationId}`);
+  if (!res.ok) throw new Error('Failed to fetch connections');
+  return res.json();
+}
+
+export async function getReviewItems(organizationId: string = 'gdg_mcet'): Promise<any> {
+  const res = await fetch(`${API_BASE}/review?organization_id=${organizationId}`);
+  if (!res.ok) throw new Error('Failed to fetch review items');
+  return res.json();
+}

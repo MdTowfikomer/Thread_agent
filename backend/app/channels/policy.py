@@ -69,7 +69,7 @@ class ChannelPolicyStore:
             if exact_key in self._policies:
                 return self._policies[exact_key]
 
-        return None
+        return self._policies.get(self._make_key(organization_id, channel_type, None, str(channel_id)))
 
     def _init_default_policies(self):
         # GDG MCET default channel policies
@@ -146,6 +146,16 @@ class ChannelPolicyStore:
             channel_id="1549434693735157820",
             channel_name="public_community",
             permission_scope=PermissionLevel.PUBLIC_COMMUNITY
+        )
+
+        # Real production GDG MCET Slack #general channel
+        self.register_policy(
+            organization_id="gdg_mcet",
+            channel_type=ChannelType.SLACK,
+            guild_id="T0C21JVKS49",
+            channel_id="C0C21QPFB6E",
+            channel_name="general",
+            permission_scope=PermissionLevel.PUBLIC_COMMUNITY,
         )
 
     def clear(self):

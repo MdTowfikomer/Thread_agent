@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, Tuple, List
 
@@ -37,6 +38,7 @@ class DiscordThreadClient(discord.Client):
 
     async def on_message(self, message: discord.Message):
         self.bot_service.handle_discord_message(message)
+        await self.bot_service.handle_discord_mention_reply(message, self)
 
 class DiscordGatewayBot:
     """
@@ -103,6 +105,110 @@ class DiscordGatewayBot:
 
         self.repository.save_record_and_chunks(record, chunks)
         return record, chunks, receipt
+
+    async def handle_discord_mention_reply(self, message: discord.Message, client: discord.Client):
+        """Handle mention and direct interaction replies for Discord messages."""
+        if message.author.bot or not message.guild:
+            return
+
+        guild_id = str(message.guild.id)
+        org_id = self.installation_store.get_organization_for_guild(guild_id)
+        if not org_id:
+            return
+
+        bot_user = client.user
+        if not bot_user:
+            return
+
+        is_bot_mentioned = (
+            bot_user in message.mentions
+            or f"<@{bot_user.id}>" in message.content
+            or f"<@!{bot_user.id}>" in message.content
+        )
+        is_reply_to_bot = (
+            message.reference
+            and message.reference.resolved
+            and getattr(message.reference.resolved, "author", None) == bot_user
+        )
+
+        if not (is_bot_mentioned or is_reply_to_bot):
+            return
+
+        import re
+        clean_query = re.sub(rf"<@!?{re.escape(str(bot_user.id))}>", "", message.content).strip()
+        if not clean_query:
+            await message.reply("Hello! Ask me any question about GDG MCET records and I'll find grounded evidence.", mention_author=False)
+            return
+
+        async with message.channel.typing():
+            try:
+                from app.identity.service import identity_service
+                from app.core.membership import membership_store
+                from app.core.auth import AuthenticatedPrincipal
+                from app.channels.outbound import channel_message_delivery_service
+                from app.channels.policy import channel_policy_store
+                from app.core.canonical import PermissionLevel
+
+                author_id = str(message.author.id)
+                author_name = message.author.name
+                display_name = getattr(message.author, "display_name", author_name)
+
+                link = identity_service.resolve_identity(
+                    organization_id=org_id,
+                    channel_type=ChannelType.DISCORD,
+                    account_id=author_id,
+                    username=author_name,
+                    display_name=display_name,
+                )
+                access_context = membership_store.derive_access_context(
+                    user_id=link.person_id,
+                    organization_id=org_id,
+                )
+                principal = AuthenticatedPrincipal(
+                    user_id=link.person_id,
+                    organization_id=org_id,
+                    access_context=access_context,
+                )
+
+                policy = channel_policy_store.get_policy(org_id, ChannelType.DISCORD, str(message.channel.id), guild_id)
+                if not policy or not policy.is_active:
+                    channel_policy_store.register_policy(
+                        organization_id=org_id,
+                        channel_type=ChannelType.DISCORD,
+                        channel_id=str(message.channel.id),
+                        permission_scope=PermissionLevel.PUBLIC_COMMUNITY,
+                        guild_id=guild_id,
+                        channel_name=getattr(message.channel, "name", None),
+                    )
+
+                reply_idempotency_key = f"discord_reply_{guild_id}_{message.channel.id}_{message.id}"
+
+                send_result = await asyncio.to_thread(
+                    channel_message_delivery_service.send_message,
+                    principal=principal,
+                    platform=ChannelType.DISCORD,
+                    destination_id=str(message.channel.id),
+                    query=clean_query,
+                    idempotency_key=reply_idempotency_key,
+                )
+
+                if send_result.get("status") == "insufficient_evidence":
+                    await message.reply(
+                        "Based on verified organizational records, there is insufficient evidence to answer this inquiry within this channel's scope.",
+                        mention_author=False
+                    )
+            except PermissionError as pe:
+                logger.warning(f"Discord ACL rejected send for message {message.id}: {pe}")
+                await message.reply(
+                    f"⚠️ Access restriction: {pe}",
+                    mention_author=False
+                )
+            except Exception as exc:
+                logger.error(f"Error handling Discord mention for message {message.id}: {exc}")
+                await message.reply(
+                    "Sorry, I encountered an error retrieving verified records. Please try again.",
+                    mention_author=False
+                )
 
     def handle_gateway_event(
         self,
@@ -172,7 +278,8 @@ class DiscordGatewayBot:
     def create_client(self) -> DiscordThreadClient:
         """Instantiate configured discord.py client with required intents."""
         intents = discord.Intents.default()
-        intents.message_content = True
+        if os.getenv("DISCORD_ENABLE_MESSAGE_CONTENT_INTENT", "false").lower() in ("true", "1"):
+            intents.message_content = True
         intents.guilds = True
         intents.messages = True
         return DiscordThreadClient(bot_service=self, intents=intents)

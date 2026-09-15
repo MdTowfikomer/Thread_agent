@@ -1,21 +1,28 @@
 import json
 import time
 import logging
+import secrets
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, Set
 from fastapi import APIRouter, Request, HTTPException, BackgroundTasks, status
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.exceptions import InvalidSignature
 import httpx
+import re
 
 from app.core.config import settings
+from app.core.auth import AuthenticatedPrincipal
 from app.core.canonical import (
     ChannelType,
     AccessContext,
     PermissionLevel
 )
-from app.channels.installation import guild_installation_store, github_binding_store
+from app.channels.installation import guild_installation_store, github_binding_store, telegram_binding_store, slack_binding_store
 from app.channels.delivery import webhook_delivery_store
+from app.channels.telegram import telegram_connector
+from app.channels.slack import slack_connector, verify_slack_signature
+from app.channels.outbound import channel_message_delivery_service
+from app.identity.service import identity_service
 from app.memory.repository import memory_repository
 from app.core.membership import membership_store
 from app.graph.state import GraphState
@@ -427,3 +434,383 @@ async def github_webhook(request: Request):
         "record_ids": ingested_records,
         "chunk_ids": ingested_chunks
     }
+
+
+# =====================================================================
+# TELEGRAM LIVE WEBHOOK INGESTION
+# =====================================================================
+
+@router.post("/telegram")
+async def handle_telegram_webhook(request: Request):
+    """
+    Authoritative Telegram Ingestion Webhook.
+    Security Guarantees:
+    1. Cryptographic secret token verification:
+       Requires X-Telegram-Bot-Api-Secret-Token matching configured telegram_webhook_secret.
+       Fails closed with 401 Unauthorized if missing, mismatched, or unconfigured.
+    2. Tenant isolation via server-owned TelegramChatBindingStore:
+       Rejects messages from unknown or unbound chats with 403 Forbidden.
+    3. Replay protection & delivery ledger:
+       Deduplicates on delivery ID (tg_update_{update_id}) with claim_delivery.
+    4. Text-only message support:
+       Ignores unsupported update types / non-text messages safely with 200 ignored.
+    5. Fail-closed transactional persistence into memory_repository.
+    """
+    # 1. Cryptographic Secret Token Verification
+    secret_header = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
+    expected_secret = settings.telegram_webhook_secret
+
+    if not expected_secret:
+        logger.error("Telegram webhook secret is not configured on the server.")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Telegram webhook secret is not configured."
+        )
+
+    if not secret_header or not secrets.compare_digest(secret_header, expected_secret):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing Telegram webhook secret token."
+        )
+
+    # 2. Parse JSON Payload
+    body_bytes = await request.body()
+    try:
+        payload = json.loads(body_bytes.decode("utf-8"))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Malformed JSON payload: {e}"
+        )
+
+    update_id = payload.get("update_id")
+    if update_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing update_id in Telegram update."
+        )
+
+    delivery_id = f"tg_update_{update_id}"
+
+    # 3. Extract Message & Chat
+    message = payload.get("message")
+    if not message:
+        # Unsupported update type (callback_query, channel_post, etc.)
+        return {
+            "status": "ignored",
+            "delivery_id": delivery_id,
+            "message": "Update does not contain a supported user message."
+        }
+
+    chat = message.get("chat") or {}
+    chat_id = str(chat.get("id", ""))
+    if not chat_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing chat ID in Telegram message."
+        )
+
+    # 4. Resolve Organization Strictly via Server-Owned Chat Binding
+    org_id = telegram_binding_store.get_organization_for_chat(chat_id)
+    if not org_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Chat '{chat_id}' is not bound to any organization."
+        )
+
+    # 5. Delivery Claiming & Replay Protection
+    try:
+        can_process, claim_status, claim_msg = webhook_delivery_store.claim_delivery(
+            delivery_id=delivery_id,
+            organization_id=org_id,
+            channel_type="telegram",
+            event_type="message",
+            repository_id=chat_id
+        )
+    except Exception as e:
+        logger.error(f"Delivery ledger error for Telegram delivery {delivery_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Delivery ledger unavailable: {e}"
+        )
+
+    if not can_process:
+        if claim_status == "duplicate":
+            return {
+                "status": "duplicate",
+                "delivery_id": delivery_id,
+                "organization_id": org_id,
+                "message": claim_msg or f"Delivery {delivery_id} already processed."
+            }
+        elif claim_status == "in_progress":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=claim_msg or f"Delivery {delivery_id} is currently being processed."
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=claim_msg or f"Cannot process delivery {delivery_id}."
+            )
+
+    # 6. Check for Text-Message Only Support
+    text = message.get("text")
+    if not text or not str(text).strip():
+        webhook_delivery_store.mark_completed(delivery_id)
+        return {
+            "status": "ignored",
+            "delivery_id": delivery_id,
+            "organization_id": org_id,
+            "message": "Only text messages are supported."
+        }
+
+    # 7. Parse and Transactionally Persist Message
+    try:
+        try:
+            event = telegram_connector.parse_webhook_update(payload, org_id)
+            if not event:
+                webhook_delivery_store.mark_completed(delivery_id)
+                return {
+                    "status": "ignored",
+                    "delivery_id": delivery_id,
+                    "organization_id": org_id,
+                    "message": "Message could not be parsed."
+                }
+        except Exception as e:
+            logger.error(f"Error parsing Telegram update for delivery {delivery_id}: {e}")
+            webhook_delivery_store.mark_failed(delivery_id, f"Parse error: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Malformed or unparseable payload for Telegram message: {e}"
+            )
+
+        record, chunks, receipt = telegram_connector.ingest_message(event)
+        ok, _ = memory_repository.persist_record_and_chunks(record, chunks)
+        if not ok:
+            raise RuntimeError("Failed to persist record and chunks to memory repository.")
+
+        webhook_delivery_store.mark_completed(delivery_id)
+
+    except Exception as e:
+        logger.error(f"Telegram webhook processing failure for delivery {delivery_id}: {e}")
+        webhook_delivery_store.mark_failed(delivery_id, str(e))
+        if isinstance(e, HTTPException):
+            raise
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Telegram ingestion error: {e}"
+        )
+
+    return {
+        "status": "ingested",
+        "channel": "telegram",
+        "organization_id": org_id,
+        "delivery_id": delivery_id,
+        "chat_id": event.chat_id,
+        "message_id": event.message_id,
+        "record_id": record.id,
+        "chunk_ids": [c.id for c in chunks]
+    }
+
+
+@router.post("/slack")
+async def handle_slack_events(request: Request):
+    """Ingest verified Slack Events API message events and handle app_mention queries."""
+    body_bytes = await request.body()
+    if not verify_slack_signature(
+        request.headers.get("X-Slack-Signature"),
+        request.headers.get("X-Slack-Request-Timestamp"),
+        body_bytes,
+    ):
+        raise HTTPException(status_code=401, detail="Invalid or stale Slack signature.")
+    try:
+        payload = json.loads(body_bytes.decode("utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Malformed JSON payload: {exc}")
+    if payload.get("type") == "url_verification":
+        return {"challenge": payload.get("challenge")}
+    if payload.get("type") != "event_callback":
+        return {"status": "ignored", "message": "Unsupported Slack event type."}
+
+    event = payload.get("event") or {}
+    event_type = str(event.get("type") or "")
+    event_id = str(payload.get("event_id") or "")
+    team_id = str(payload.get("team_id") or "")
+    channel_id = str(event.get("channel") or "")
+    event_ts = str(event.get("ts") or "")
+
+    # 1. Authoritative server-bound workspace and channel verification
+    org_id = slack_binding_store.get_organization_for_channel(team_id, channel_id)
+    if not org_id:
+        raise HTTPException(status_code=403, detail="Slack workspace or channel is not bound.")
+    if not event_id:
+        raise HTTPException(status_code=400, detail="Missing Slack event_id.")
+
+    # 2. Replay protection for Slack event delivery
+    event_delivery_id = f"slack_event_{event_id}"
+    can_process_event, event_claim_status, event_claim_msg = webhook_delivery_store.claim_delivery(
+        delivery_id=event_delivery_id,
+        organization_id=org_id,
+        channel_type="slack",
+        event_type=event_type,
+        repository_id=channel_id,
+    )
+    if not can_process_event:
+        if event_claim_status == "duplicate":
+            return {"status": "duplicate", "event_id": event_id}
+        raise HTTPException(status_code=409, detail=event_claim_msg or "Slack event is already processing.")
+
+    # 3. Rule: Ignore bot messages and message subtypes
+    if event.get("bot_id") or event.get("subtype"):
+        webhook_delivery_store.mark_completed(event_delivery_id)
+        return {"status": "ignored", "event_id": event_id, "reason": "bot_or_subtype"}
+
+    # Canonical message identifier for deduplicating message ingestion
+    msg_canonical_id = f"slack_msg_{team_id}_{channel_id}_{event_ts}" if event_ts else event_delivery_id
+
+    # 4. Dedicated app_mention branch before parse_event()
+    if event_type == "app_mention":
+        try:
+            # A. Ingest the human message into Supabase (if not already ingested via message.channels)
+            can_ingest, _, _ = webhook_delivery_store.claim_delivery(
+                delivery_id=msg_canonical_id,
+                organization_id=org_id,
+                channel_type="slack",
+                event_type="message",
+                repository_id=channel_id,
+            )
+            record = None
+            chunks = []
+            if can_ingest:
+                try:
+                    parsed_msg = slack_connector.parse_event(payload, org_id)
+                    if parsed_msg:
+                        record, chunks, _ = slack_connector.ingest_message(parsed_msg)
+                        ok, _ = memory_repository.persist_record_and_chunks(record, chunks)
+                        if ok:
+                            webhook_delivery_store.mark_completed(msg_canonical_id)
+                        else:
+                            webhook_delivery_store.mark_failed(msg_canonical_id, "Persistence failed.")
+                except Exception as ingest_err:
+                    logger.warning(f"Failed to ingest mention message {msg_canonical_id}: {ingest_err}")
+                    webhook_delivery_store.mark_failed(msg_canonical_id, str(ingest_err))
+
+            # B. Durable delivery ledger for mention reply response
+            reply_delivery_id = f"slack_reply_{team_id}_{channel_id}_{event_ts}" if event_ts else f"slack_reply_{event_id}"
+            can_reply, reply_claim_status, reply_claim_msg = webhook_delivery_store.claim_delivery(
+                delivery_id=reply_delivery_id,
+                organization_id=org_id,
+                channel_type="slack",
+                event_type="app_mention_reply",
+                repository_id=channel_id,
+            )
+            if not can_reply:
+                webhook_delivery_store.mark_completed(event_delivery_id)
+                if reply_claim_status == "duplicate":
+                    return {"status": "duplicate", "event_id": event_id, "delivery_id": reply_delivery_id}
+                raise HTTPException(status_code=409, detail=reply_claim_msg or "Mention reply already processing.")
+
+            # C. Extract query and remove only the bot mention
+            raw_text = str(event.get("text") or "")
+            authorizations = payload.get("authorizations") or []
+            bot_user_id = authorizations[0].get("user_id") if authorizations else None
+            if bot_user_id:
+                query = re.sub(rf"<@{re.escape(bot_user_id)}(?:\|[^>]*)?>", "", raw_text).strip()
+            else:
+                query = re.sub(r"<@[A-Z0-9]+(?:\|[^>]*)?>", "", raw_text, count=1).strip()
+
+            # D. Resolve the Slack author through the identity service
+            user_id = str(event.get("user") or "")
+            author_name = str(event.get("user_name") or user_id)
+            link = identity_service.resolve_identity(
+                organization_id=org_id,
+                channel_type=ChannelType.SLACK,
+                account_id=user_id,
+                username=author_name,
+                display_name=author_name,
+            )
+            access_context = membership_store.derive_access_context(
+                user_id=link.person_id,
+                organization_id=org_id,
+            )
+            principal = AuthenticatedPrincipal(
+                user_id=link.person_id,
+                organization_id=org_id,
+                access_context=access_context,
+            )
+
+            # E. Run authorized retrieval, destination ACL check, and post grounded answer back to bound channel
+            send_result = channel_message_delivery_service.send_message(
+                principal=principal,
+                platform=ChannelType.SLACK,
+                destination_id=channel_id,
+                query=query,
+                idempotency_key=reply_delivery_id,
+            )
+
+            webhook_delivery_store.mark_completed(reply_delivery_id)
+            webhook_delivery_store.mark_completed(event_delivery_id)
+
+            return {
+                "status": "responded",
+                "channel": "slack",
+                "organization_id": org_id,
+                "event_id": event_id,
+                "team_id": team_id,
+                "channel_id": channel_id,
+                "message_ts": event_ts,
+                "reply_delivery_id": reply_delivery_id,
+                "send_result": send_result,
+                "record_id": record.id if record else None,
+                "chunk_ids": [c.id for c in chunks] if chunks else [],
+            }
+        except PermissionError as exc:
+            webhook_delivery_store.mark_failed(event_delivery_id, str(exc))
+            raise HTTPException(status_code=403, detail=str(exc))
+        except Exception as exc:
+            webhook_delivery_store.mark_failed(event_delivery_id, str(exc))
+            raise HTTPException(status_code=500, detail=f"Slack mention response error: {exc}")
+
+    # 5. Inbound message.channels events: deduplicate canonically on workspace + channel + ts
+    can_ingest_msg, msg_claim_status, msg_claim_msg = webhook_delivery_store.claim_delivery(
+        delivery_id=msg_canonical_id,
+        organization_id=org_id,
+        channel_type="slack",
+        event_type="message",
+        repository_id=channel_id,
+    )
+    if not can_ingest_msg:
+        webhook_delivery_store.mark_completed(event_delivery_id)
+        if msg_claim_status == "duplicate":
+            return {"status": "duplicate", "event_id": event_id, "canonical_id": msg_canonical_id}
+        raise HTTPException(status_code=409, detail=msg_claim_msg or "Slack message is already processing.")
+
+    try:
+        parsed = slack_connector.parse_event(payload, org_id)
+        if not parsed:
+            webhook_delivery_store.mark_completed(msg_canonical_id)
+            webhook_delivery_store.mark_completed(event_delivery_id)
+            return {"status": "ignored", "event_id": event_id}
+        record, chunks, _ = slack_connector.ingest_message(parsed)
+        ok, _ = memory_repository.persist_record_and_chunks(record, chunks)
+        if not ok:
+            webhook_delivery_store.mark_failed(msg_canonical_id, "Failed to persist Slack event.")
+            webhook_delivery_store.mark_failed(event_delivery_id, "Failed to persist Slack event.")
+            raise RuntimeError("Failed to persist Slack event.")
+        webhook_delivery_store.mark_completed(msg_canonical_id)
+        webhook_delivery_store.mark_completed(event_delivery_id)
+        return {
+            "status": "ingested",
+            "channel": "slack",
+            "organization_id": org_id,
+            "event_id": event_id,
+            "team_id": team_id,
+            "channel_id": channel_id,
+            "message_ts": event_ts,
+            "record_id": record.id,
+            "chunk_ids": [chunk.id for chunk in chunks],
+        }
+    except Exception as exc:
+        webhook_delivery_store.mark_failed(msg_canonical_id, str(exc))
+        webhook_delivery_store.mark_failed(event_delivery_id, str(exc))
+        raise HTTPException(status_code=500, detail=f"Slack ingestion error: {exc}")

@@ -910,3 +910,61 @@ def test_discord_webhook_organizer_internal_answer_cannot_become_channel_visible
     assert "$500" not in data_comm["data"]["content"]
 
 
+def test_discord_gateway_bot_mention_reply(monkeypatch):
+    import asyncio
+    async def run_test():
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        from app.channels.gateway import discord_gateway_bot
+        from app.channels.outbound import channel_message_delivery_service
+
+        bot_user = SimpleNamespace(id="1549157747495280641")
+        client = SimpleNamespace(user=bot_user)
+
+        mock_typing_cm = AsyncMock()
+        mock_typing_cm.__aenter__ = AsyncMock()
+        mock_typing_cm.__aexit__ = AsyncMock()
+
+        channel = SimpleNamespace(
+            id="1549162457359065110",
+            name="general",
+            typing=lambda: mock_typing_cm,
+        )
+        author = SimpleNamespace(id="discord_user_123", name="test_user", display_name="Test User", bot=False)
+        guild = SimpleNamespace(id="1549162455874412667", name="Towfik's server")
+
+        message = SimpleNamespace(
+            id="msg_999888777",
+            guild=guild,
+            channel=channel,
+            author=author,
+            content="<@1549157747495280641> What is GDG MCET?",
+            mentions=[bot_user],
+            reference=None,
+            reply=AsyncMock(),
+        )
+
+        send_calls = []
+        def mock_send_message(principal, platform, destination_id, query, idempotency_key):
+            send_calls.append({
+                "principal": principal,
+                "platform": platform,
+                "destination_id": destination_id,
+                "query": query,
+                "idempotency_key": idempotency_key
+            })
+            return {"status": "sent"}
+
+        monkeypatch.setattr(channel_message_delivery_service, "send_message", mock_send_message)
+
+        await discord_gateway_bot.handle_discord_mention_reply(message, client)
+
+        assert len(send_calls) == 1
+        assert send_calls[0]["query"] == "What is GDG MCET?"
+        assert send_calls[0]["platform"] == ChannelType.DISCORD
+        assert send_calls[0]["destination_id"] == "1549162457359065110"
+
+    asyncio.run(run_test())
+
+
+

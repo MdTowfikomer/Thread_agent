@@ -73,6 +73,18 @@ def test_migration_sql_idempotency_and_safe_repeatability():
     assert "provenance" in sql_006
     assert "embedding_status = 'ready'" in sql_006
 
+    # 7. 018_discord_guild_installations_and_channel_policies
+    assert "018_discord_guild_installations_and_channel_policies" in migration_map
+    sql_018 = migration_map["018_discord_guild_installations_and_channel_policies"]
+    assert "CREATE TABLE IF NOT EXISTS discord_guild_installations" in sql_018
+    assert "CREATE TABLE IF NOT EXISTS channel_policies" in sql_018
+    assert "ALTER TABLE discord_guild_installations ENABLE ROW LEVEL SECURITY;" in sql_018
+    assert "ALTER TABLE channel_policies ENABLE ROW LEVEL SECURITY;" in sql_018
+    assert 'CREATE POLICY "service_role_all_discord_guild_installations"' in sql_018
+    assert 'CREATE POLICY "service_role_all_channel_policies"' in sql_018
+    assert "ON CONFLICT (guild_id) DO UPDATE" in sql_018
+    assert "ON CONFLICT (organization_id, channel_type, guild_id, channel_id) DO UPDATE" in sql_018
+
 def test_migration_runner_state_tracking_and_idempotent_execution():
     runner = MigrationRunner()
     

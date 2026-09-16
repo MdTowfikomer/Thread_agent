@@ -1,3 +1,4 @@
+import os
 import logging
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timezone
@@ -25,7 +26,8 @@ class SupabaseMemoryStore:
 
     @property
     def is_configured(self) -> bool:
-        return bool(self.url and self.key)
+        db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+        return bool((self.url and self.key) or db_url)
 
     @property
     def client(self):
@@ -111,24 +113,43 @@ class SupabaseMemoryStore:
         Transactional Persistence RPC: Atomically persists a SourceRecord and its derived MemoryChunks.
         If any chunk insertion fails (e.g. dimension mismatch, constraint error), the transaction rolls back.
         """
-        if not self.client:
-            return False
-
         record_data = self._format_record_for_db(record)
         chunks_data = [self._format_chunk_for_db(c) for c in chunks]
 
-        try:
-            rpc_res = self.client.rpc("persist_record_and_chunks", {
-                "record_data": record_data,
-                "chunks_data": chunks_data
-            }).execute()
+        if self.client:
+            try:
+                rpc_res = self.client.rpc("persist_record_and_chunks", {
+                    "record_data": record_data,
+                    "chunks_data": chunks_data
+                }).execute()
 
-            if rpc_res.data and rpc_res.data.get("success"):
-                return True
-            return False
-        except Exception as e:
-            logger.error(f"Transactional persistence failed in Supabase RPC: {e}")
-            raise
+                if rpc_res.data and rpc_res.data.get("success"):
+                    return True
+                return False
+            except Exception as e:
+                logger.error(f"Transactional persistence failed in Supabase RPC: {e}")
+                raise
+
+        db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+        if db_url:
+            import psycopg2, json
+            try:
+                with psycopg2.connect(db_url) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT persist_record_and_chunks(%s::jsonb, %s::jsonb);",
+                            (json.dumps(record_data), json.dumps(chunks_data))
+                        )
+                        res = cur.fetchone()
+                        if res and res[0] and res[0].get("success"):
+                            conn.commit()
+                            return True
+                        return False
+            except Exception as e:
+                logger.error(f"Transactional persistence failed in PostgreSQL: {e}")
+                raise
+
+        return False
 
     def add_record(self, record: SourceRecord) -> bool:
         """Upsert SourceRecord into Supabase source_records table."""
@@ -261,27 +282,44 @@ class SupabaseMemoryStore:
         Calculates pre-retrieval candidate counts before and after ACL enforcement.
         Returns: (candidates_before_acl, candidates_after_acl)
         """
-        if not self.client:
-            return 0, 0
-        try:
-            scope_vals = [s.value for s in allowed_scopes]
-            res_total = self.client.table("memory_chunks") \
-                .select("id", count="exact") \
-                .eq("organization_id", organization_id) \
-                .execute()
-            total_before = res_total.count or 0
+        scope_vals = [s.value for s in allowed_scopes]
 
-            res_authorized = self.client.table("memory_chunks") \
-                .select("id", count="exact") \
-                .eq("organization_id", organization_id) \
-                .in_("permission", scope_vals) \
-                .execute()
-            total_after = res_authorized.count or 0
+        if self.client:
+            try:
+                res_total = self.client.table("memory_chunks") \
+                    .select("id", count="exact") \
+                    .eq("organization_id", organization_id) \
+                    .execute()
+                total_before = res_total.count or 0
 
-            return total_before, total_after
-        except Exception as e:
-            logger.warning(f"Error getting candidate counts from Supabase: {e}")
-            return 0, 0
+                res_authorized = self.client.table("memory_chunks") \
+                    .select("id", count="exact") \
+                    .eq("organization_id", organization_id) \
+                    .in_("permission", scope_vals) \
+                    .execute()
+                total_after = res_authorized.count or 0
+
+                return total_before, total_after
+            except Exception as e:
+                logger.warning(f"Error getting candidate counts from Supabase: {e}")
+                return 0, 0
+
+        db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+        if db_url:
+            try:
+                import psycopg2
+                with psycopg2.connect(db_url) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT count(*) FROM memory_chunks WHERE organization_id = %s;", (organization_id,))
+                        total_before = cur.fetchone()[0] or 0
+                        cur.execute("SELECT count(*) FROM memory_chunks WHERE organization_id = %s AND permission = ANY(%s);", (organization_id, scope_vals))
+                        total_after = cur.fetchone()[0] or 0
+                        return total_before, total_after
+            except Exception as e:
+                logger.warning(f"Error getting candidate counts from PostgreSQL: {e}")
+                return 0, 0
+
+        return 0, 0
 
     def hybrid_search(
         self,
@@ -293,45 +331,87 @@ class SupabaseMemoryStore:
         rrf_k: int = 60
     ) -> List[Tuple[float, MemoryChunk, float, float, int, int]]:
         """
-        Execute pre-retrieval ACL filtered hybrid search via Supabase RPC.
+        Execute pre-retrieval ACL filtered hybrid search via Supabase RPC or direct PostgreSQL query.
         Combines pgvector cosine similarity with tsvector FTS using Reciprocal Rank Fusion (RRF).
         Returns: List of (combined_score, chunk, similarity, fts_rank, dense_rank, lexical_rank)
         """
-        if not self.client:
-            return []
-
         if len(query_embedding) != settings.EMBEDDING_DIMENSION:
             raise ValueError(
                 f"Query embedding dimension mismatch: expected {settings.EMBEDDING_DIMENSION}, got {len(query_embedding)}"
             )
 
-        try:
-            scope_values = [s.value for s in allowed_scopes]
-            rpc_params = {
-                "query_text": query,
-                "query_embedding": query_embedding,
-                "match_count": match_count,
-                "filter_organization_id": organization_id,
-                "filter_permissions": scope_values,
-                "rrf_k": rrf_k
-            }
-            res = self.client.rpc("hybrid_search", rpc_params).execute()
-            rows = res.data or []
+        scope_values = [s.value for s in allowed_scopes]
 
-            results = []
-            for row in rows:
-                chunk = self._row_to_chunk(row)
-                combined_score = float(row.get("combined_score") or 0.0)
-                sim = float(row.get("similarity") or 0.0)
-                fts_rank = float(row.get("fts_rank") or 0.0)
-                d_rank = int(row.get("dense_rank") or 0)
-                l_rank = int(row.get("lexical_rank") or 0)
-                results.append((combined_score, chunk, sim, fts_rank, d_rank, l_rank))
+        if self.client:
+            try:
+                rpc_params = {
+                    "query_text": query,
+                    "query_embedding": query_embedding,
+                    "match_count": match_count,
+                    "filter_organization_id": organization_id,
+                    "filter_permissions": scope_values,
+                    "rrf_k": rrf_k
+                }
+                res = self.client.rpc("hybrid_search", rpc_params).execute()
+                rows = res.data or []
 
-            return results
-        except Exception as e:
-            logger.error(f"Supabase hybrid search failed: {e}")
-            return []
+                results = []
+                for row in rows:
+                    chunk = self._row_to_chunk(row)
+                    combined_score = float(row.get("combined_score") or 0.0)
+                    sim = float(row.get("similarity") or 0.0)
+                    fts_rank = float(row.get("fts_rank") or 0.0)
+                    d_rank = int(row.get("dense_rank") or 0)
+                    l_rank = int(row.get("lexical_rank") or 0)
+                    results.append((combined_score, chunk, sim, fts_rank, d_rank, l_rank))
+
+                return results
+            except Exception as e:
+                logger.error(f"Supabase hybrid search failed: {e}")
+                return []
+
+        db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+        if db_url:
+            try:
+                import psycopg2
+                with psycopg2.connect(db_url) as conn:
+                    with conn.cursor() as cur:
+                        embedding_str = f"[{','.join(str(x) for x in query_embedding)}]"
+                        cur.execute("""
+                            SELECT 
+                                id, source_record_id, organization_id, source_type, source_uri,
+                                source_timestamp, source_hash, ingestion_version, policy_version,
+                                author, author_role, title, content, permission, tags, entities,
+                                provenance, similarity, fts_rank, combined_score, dense_rank, lexical_rank
+                            FROM hybrid_search(%s, %s::vector, %s, %s, %s, %s);
+                        """, (query, embedding_str, match_count, organization_id, scope_values, rrf_k))
+                        rows = cur.fetchall()
+                        results = []
+                        for r in rows:
+                            row_dict = {
+                                "id": r[0], "source_record_id": r[1], "organization_id": r[2],
+                                "source_type": r[3], "source_uri": r[4], "source_timestamp": r[5],
+                                "source_hash": r[6], "ingestion_version": r[7], "policy_version": r[8],
+                                "author": r[9], "author_role": r[10], "title": r[11], "content": r[12],
+                                "permission": r[13], "tags": r[14], "entities": r[15], "provenance": r[16],
+                                "similarity": r[17], "fts_rank": r[18], "combined_score": r[19],
+                                "dense_rank": r[20], "lexical_rank": r[21]
+                            }
+                            chunk = self._row_to_chunk(row_dict)
+                            results.append((
+                                float(r[19] or 0.0),
+                                chunk,
+                                float(r[17] or 0.0),
+                                float(r[18] or 0.0),
+                                int(r[20] or 0),
+                                int(r[21] or 0)
+                            ))
+                        return results
+            except Exception as e:
+                logger.error(f"PostgreSQL direct hybrid search failed: {e}")
+                return []
+
+        return []
 
     def _row_to_chunk(self, row: Dict[str, Any]) -> MemoryChunk:
         """Helper to reconstruct MemoryChunk preserving full provenance and original timestamps."""

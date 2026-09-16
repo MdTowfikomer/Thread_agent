@@ -86,6 +86,51 @@ def setup_channel_test_env():
     clear_processed_interactions()
     membership_store.reset()
 
+    # Populate test guild installations
+    guild_installation_store.register_installation(
+        guild_id="1549162455874412667",
+        organization_id="gdg_mcet",
+        guild_name="GDG MCET Discord"
+    )
+    guild_installation_store.register_installation(
+        guild_id="11223344",
+        organization_id="gdg_mcet",
+        guild_name="GDG MCET Discord Test"
+    )
+
+    # Populate test channel policies for 11223344
+    for cid, cname, pscope in [
+        ("99001122", "core-team", PermissionLevel.INTERNAL_CORE),
+        ("77889900", "organizers-budget", PermissionLevel.INTERNAL_CORE),
+        ("55667788", "general", PermissionLevel.PUBLIC_COMMUNITY),
+        ("11112222", "general-help", PermissionLevel.PUBLIC_COMMUNITY),
+        ("33445566", "announcements", PermissionLevel.PUBLIC_COMMUNITY),
+    ]:
+        channel_policy_store.register_policy(
+            organization_id="gdg_mcet",
+            channel_type=ChannelType.DISCORD,
+            guild_id="11223344",
+            channel_id=cid,
+            channel_name=cname,
+            permission_scope=pscope
+        )
+
+    # Populate test channel policies for 1549162455874412667
+    for cid, cname, pscope in [
+        ("1549434796772560967", "core-team", PermissionLevel.INTERNAL_CORE),
+        ("1549434872584474735", "organizers", PermissionLevel.INTERNAL_CORE),
+        ("1549162457359065110", "general", PermissionLevel.PUBLIC_COMMUNITY),
+        ("1549434693735157820", "public_community", PermissionLevel.PUBLIC_COMMUNITY),
+    ]:
+        channel_policy_store.register_policy(
+            organization_id="gdg_mcet",
+            channel_type=ChannelType.DISCORD,
+            guild_id="1549162455874412667",
+            channel_id=cid,
+            channel_name=cname,
+            permission_scope=pscope
+        )
+
     records, chunks, receipts = get_seed_data(organization_id="gdg_mcet")
     for r in records:
         memory_store.add_record(r)

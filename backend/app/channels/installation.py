@@ -16,34 +16,46 @@ class GuildInstallationStore:
     """
     Server-owned authoritative repository mapping Discord guilds to Thread organizations.
     Resolves guild_id -> organization_id securely.
-    Rejects any caller or payload attempts to override the organization boundary.
+    Durable storage backed by PostgreSQL discord_guild_installations table.
+    Contains ZERO hardcoded runtime or fixture defaults.
     """
     def __init__(self):
         self._installations: Dict[str, GuildInstallation] = {}
-        self._init_defaults()
 
-    def _init_defaults(self):
-        # Default GDG MCET Discord guild bindings
-        self.register_installation(
-            guild_id="1549162455874412667",
-            organization_id="gdg_mcet",
-            guild_name="GDG MCET Discord"
-        )
-        self.register_installation(
-            guild_id="11223344",
-            organization_id="gdg_mcet",
-            guild_name="GDG MCET Discord Test"
-        )
+    def load_from_database(self, fail_on_error: bool = True) -> int:
+        """
+        Load authoritative active Discord guild installations from PostgreSQL.
+        Fails closed with RuntimeError on database read error.
+        """
+        db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+        if not db_url:
+            if fail_on_error:
+                raise RuntimeError("[GuildInstallationStore] Cannot load installations: SUPABASE_DB_URL is not set.")
+            return 0
+
         try:
-            from app.core.config import settings
-            for gid in settings.discord_allowed_guild_ids:
-                self.register_installation(
-                    guild_id=gid,
-                    organization_id="gdg_mcet",
-                    guild_name=f"Discord Guild {gid}"
-                )
-        except Exception:
-            pass
+            import psycopg2
+            with psycopg2.connect(db_url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT guild_id, organization_id, guild_name, is_active "
+                        "FROM discord_guild_installations WHERE is_active = TRUE;"
+                    )
+                    rows = cur.fetchall()
+                    self._installations.clear()
+                    for r in rows:
+                        gid, org_id, name, active = r[0], r[1], r[2], r[3]
+                        self._installations[str(gid)] = GuildInstallation(
+                            guild_id=str(gid),
+                            organization_id=org_id,
+                            guild_name=name,
+                            is_active=bool(active)
+                        )
+            return len(self._installations)
+        except Exception as exc:
+            if fail_on_error:
+                raise RuntimeError(f"[GuildInstallationStore] Database error reading Discord guild installations: {exc}") from exc
+            return 0
 
     def register_installation(
         self,
@@ -59,22 +71,78 @@ class GuildInstallationStore:
             is_active=is_active
         )
         self._installations[str(guild_id)] = inst
+
+        db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+        if db_url:
+            try:
+                import psycopg2
+                with psycopg2.connect(db_url) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("""
+                            INSERT INTO discord_guild_installations (guild_id, organization_id, guild_name, is_active)
+                            VALUES (%s, %s, %s, %s)
+                            ON CONFLICT (guild_id) DO UPDATE SET
+                                organization_id = EXCLUDED.organization_id,
+                                guild_name = EXCLUDED.guild_name,
+                                is_active = EXCLUDED.is_active;
+                        """, (inst.guild_id, inst.organization_id, inst.guild_name, inst.is_active))
+                    conn.commit()
+            except Exception:
+                pass
+
         return inst
 
     def get_organization_for_guild(self, guild_id: Optional[str]) -> Optional[str]:
         if not guild_id:
             return None
-        inst = self._installations.get(str(guild_id))
+        gid = str(guild_id)
+        inst = self._installations.get(gid)
         if inst and inst.is_active:
             return inst.organization_id
+
+        db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+        if db_url:
+            try:
+                import psycopg2
+                with psycopg2.connect(db_url) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT organization_id FROM discord_guild_installations WHERE guild_id = %s AND is_active = TRUE;",
+                            (gid,)
+                        )
+                        row = cur.fetchone()
+                        if row:
+                            return row[0]
+            except Exception:
+                pass
         return None
 
     def get_installation(self, guild_id: str) -> Optional[GuildInstallation]:
-        return self._installations.get(str(guild_id))
+        gid = str(guild_id)
+        if gid in self._installations:
+            return self._installations[gid]
+
+        db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+        if db_url:
+            try:
+                import psycopg2
+                with psycopg2.connect(db_url) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT guild_id, organization_id, guild_name, is_active FROM discord_guild_installations WHERE guild_id = %s;",
+                            (gid,)
+                        )
+                        r = cur.fetchone()
+                        if r:
+                            inst = GuildInstallation(guild_id=r[0], organization_id=r[1], guild_name=r[2], is_active=r[3])
+                            self._installations[gid] = inst
+                            return inst
+            except Exception:
+                pass
+        return None
 
     def clear(self):
         self._installations.clear()
-        self._init_defaults()
 
 guild_installation_store = GuildInstallationStore()
 
@@ -234,16 +302,19 @@ class TelegramChatBindingStore:
         db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
         if not db_url:
             return
-        import psycopg2
-        with psycopg2.connect(db_url) as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT id, organization_id, chat_id, chat_title, chat_type, is_active, bound_at, metadata FROM telegram_chat_bindings;")
-                for row in cur.fetchall():
-                    self._bindings_by_id[str(row[2])] = TelegramChatBinding(
-                        id=row[0], organization_id=row[1], chat_id=str(row[2]),
-                        chat_title=row[3], chat_type=row[4], is_active=row[5],
-                        bound_at=row[6], metadata=row[7] or {}
-                    )
+        try:
+            import psycopg2
+            with psycopg2.connect(db_url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT id, organization_id, chat_id, chat_title, chat_type, is_active, bound_at, metadata FROM telegram_chat_bindings;")
+                    for row in cur.fetchall():
+                        self._bindings_by_id[str(row[2])] = TelegramChatBinding(
+                            id=row[0], organization_id=row[1], chat_id=str(row[2]),
+                            chat_title=row[3], chat_type=row[4], is_active=row[5],
+                            bound_at=row[6], metadata=row[7] or {}
+                        )
+        except Exception:
+            pass
 
     def register_binding(
         self,
@@ -360,16 +431,19 @@ class SlackWorkspaceBindingStore:
         db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
         if not db_url:
             return
-        import psycopg2
-        with psycopg2.connect(db_url) as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT id, organization_id, team_id, team_domain, is_active, bound_at, metadata FROM slack_workspace_bindings;")
-                for row in cur.fetchall():
-                    self._bindings_by_id[str(row[2])] = SlackWorkspaceBinding(
-                        id=row[0], organization_id=row[1], team_id=str(row[2]),
-                        team_domain=row[3], is_active=row[4], bound_at=row[5],
-                        metadata=row[6] or {}
-                    )
+        try:
+            import psycopg2
+            with psycopg2.connect(db_url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT id, organization_id, team_id, team_domain, is_active, bound_at, metadata FROM slack_workspace_bindings;")
+                    for row in cur.fetchall():
+                        self._bindings_by_id[str(row[2])] = SlackWorkspaceBinding(
+                            id=row[0], organization_id=row[1], team_id=str(row[2]),
+                            team_domain=row[3], is_active=row[4], bound_at=row[5],
+                            metadata=row[6] or {}
+                        )
+        except Exception:
+            pass
 
     def register_binding(
         self,

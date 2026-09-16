@@ -89,6 +89,11 @@
       "sha256": "2ccb2bd35b53b72449e4d66a989151df9ac09a221615995d600ca690a036b532",
       "status": "frozen",
       "description": "Purge fixture seed records and associated retrieval chunks from organizational memory"
+    },
+    "018_discord_guild_installations_and_channel_policies": {
+      "sha256": "41d883ed592e2cc91eb2f449b782c791edb7c2f97ae4d78869102507699d4898",
+      "status": "frozen",
+      "description": "Server-owned Discord guild installations and channel policies tables with RLS and production seeds"
     }
   }
 }

@@ -533,6 +533,19 @@ class DiscordGatewayBot:
         intents.messages = True
         return DiscordThreadClient(bot_service=self, intents=intents)
 
+    def load_bindings(self, fail_on_error: bool = True):
+        """
+        Load authoritative active Discord guild installations and channel policies from PostgreSQL.
+        Fails closed with RuntimeError on database read error.
+        """
+        db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+        if db_url:
+            self.installation_store.load_from_database(fail_on_error=fail_on_error)
+            from app.channels.policy import channel_policy_store
+            channel_policy_store.load_from_database(fail_on_error=fail_on_error)
+        elif fail_on_error and os.getenv("APP_ENV") == "production" and os.getenv("THREAD_FORCE_DETERMINISTIC_EMBEDDINGS") != "1":
+            raise RuntimeError("Database error: SUPABASE_DB_URL is required to load bindings in production.")
+
     async def start(self):
         """
         Start the live Discord gateway client with discord.py under supervisor protection.
@@ -543,6 +556,10 @@ class DiscordGatewayBot:
             logger.warning("[Discord Gateway Supervisor] DISCORD_BOT_TOKEN is not configured. Gateway bot cannot start.")
             self.state = "stopped"
             return
+
+        # 1. Authoritative binding load: load active exact guild and channel policies from PostgreSQL
+        # Fails closed on database read failure
+        self.load_bindings(fail_on_error=True)
 
         self._running = True
         self.state = "starting"

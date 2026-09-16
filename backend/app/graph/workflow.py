@@ -12,6 +12,7 @@ from app.tools.resources import resource_assistant
 from app.tools.summarizer import summarizer_assistant
 from app.tools.github_helper import github_helper
 from app.tools.account_link import account_link_tool
+from app.channels.formatter import coerce_model_text
 
 
 def get_llm():
@@ -23,7 +24,7 @@ def get_llm():
     if api_key:
         try:
             from langchain_google_genai import ChatGoogleGenerativeAI
-            gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+            gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
             return ChatGoogleGenerativeAI(
                 model=gemini_model,
                 google_api_key=api_key,
@@ -94,7 +95,7 @@ def classify_intent_and_routing(query: str, ws) -> Tuple[str, Optional[str], Opt
         "policy", "attendance", "proposal", "retro", "receipt", "audit", "secret", "private",
         "mariana", "submarine", "protocol", "record", "records", "event announced", "updates event",
         "next workshop", "upcoming workshop", "prerequisite", "prerequisites", "launch", "titan", "project",
-        "channel policy", "ingest"
+        "channel policy", "ingest", "rsvp", "booth", "check-in", "gate"
     )
 
     is_org_query = any(ind in q_lower for ind in org_indicators)
@@ -363,21 +364,157 @@ def synthesis_node(state: GraphState) -> Dict[str, Any]:
             "trace": new_trace
         }
 
+def invoke_llm_with_fallback(llm, system_prompt: str) -> Optional[str]:
+    """
+    Safely invoke the LLM. If the primary model encounters a 429 quota error or failure,
+    automatically attempt fallback Gemini models (gemini-2.5-flash, gemini-2.0-flash, gemini-1.5-flash, gemini-2.5-flash-lite)
+    and OpenAI if available.
+    """
+    if llm:
+        try:
+            res = llm.invoke(system_prompt)
+            raw = res.content if hasattr(res, "content") else res
+            return coerce_model_text(raw)
+        except Exception as e:
+            print(f"[invoke_llm_with_fallback] Primary LLM failed: {e}")
+
+    if os.getenv("THREAD_FORCE_DETERMINISTIC_SYNTHESIS") == "1":
+        return None
+
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or getattr(settings, "gemini_api_key", "")
+    if api_key:
+        fallback_models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash-lite"]
+        curr_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+        for model_name in fallback_models:
+            if model_name == curr_model:
+                continue
+            try:
+                from langchain_google_genai import ChatGoogleGenerativeAI
+                fallback_llm = ChatGoogleGenerativeAI(
+                    model=model_name,
+                    google_api_key=api_key,
+                    temperature=0.1
+                )
+                res = fallback_llm.invoke(system_prompt)
+                raw = res.content if hasattr(res, "content") else res
+                print(f"[invoke_llm_with_fallback] Fallback to model '{model_name}' succeeded.")
+                return coerce_model_text(raw)
+            except Exception as fe:
+                print(f"[invoke_llm_with_fallback] Fallback model '{model_name}' failed: {fe}")
+
+    if settings.has_openai:
+        try:
+            from langchain_openai import ChatOpenAI
+            oai_llm = ChatOpenAI(
+                model="gpt-4o",
+                openai_api_key=settings.OPENAI_API_KEY,
+                temperature=0.1
+            )
+            res = oai_llm.invoke(system_prompt)
+            raw = res.content if hasattr(res, "content") else res
+            print("[invoke_llm_with_fallback] Fallback to OpenAI succeeded.")
+            return coerce_model_text(raw)
+        except Exception as oe:
+            print(f"[invoke_llm_with_fallback] OpenAI fallback failed: {oe}")
+
+    return None
+
+
+# --- NODE 4: SYNTHESIS AGENT (STRICT GROUNDING - NO BLUFFING) ---
+def synthesis_node(state: GraphState) -> Dict[str, Any]:
+    ws = get_workspace(state.organization_id)
+    role = get_role_agent(state.organization_id, state.target_role_id)
+    role_name = role.name if role else "ThreadAgent"
+    role_title = role.role if role else "Assistant"
+    role_style = role.style if role else "Clear, professional, and precise."
+
+    # 1. TOOL EXECUTION BRANCH
+    if state.intent_category == "TOOL_EXECUTION":
+        final_answer = ""
+        tool = state.tool_name or ""
+        if tool == "events":
+            events = event_assistant.list_upcoming_events(state.organization_id)
+            final_answer = event_assistant.format_events_response(events)
+        elif tool == "resources":
+            resources = resource_assistant.search_resources(
+                query=state.tool_args or "",
+                org_id=state.organization_id,
+                access_context=state.access_context
+            )
+            final_answer = resource_assistant.format_resources_response(resources)
+        elif tool == "summary":
+            parts = (state.session_key or "").split(":")
+            platform = parts[0] if len(parts) > 0 and parts[0] else "discord"
+            channel_id = parts[1] if len(parts) > 1 and parts[1] else (state.session_key or "")
+            final_answer = summarizer_assistant.summarize_channel_discussion(
+                organization_id=state.organization_id,
+                channel_id=channel_id,
+                platform=platform,
+                access_context=state.access_context,
+                window_hours=48
+            )
+        elif tool == "github":
+            repo = github_helper.get_bound_repository(state.organization_id)
+            final_answer = github_helper.format_github_response(repo)
+        elif tool == "link":
+            arg = (state.tool_args or "").strip()
+            parts = (state.session_key or "").split(":")
+            plat = parts[0] if len(parts) > 0 and parts[0] else "community"
+            user_id = state.access_context.user_id if state.access_context else "anon"
+            if arg:
+                _, final_answer = account_link_tool.redeem_link_token(
+                    raw_token=arg,
+                    target_platform=plat,
+                    target_account_id=user_id,
+                    target_username=user_id,
+                    org_id=state.organization_id
+                )
+            else:
+                tok = account_link_tool.generate_link_token(
+                    initiating_platform=plat,
+                    initiating_account_id=user_id,
+                    initiating_username=user_id,
+                    person_id=user_id,
+                    org_id=state.organization_id
+                )
+                final_answer = (
+                    f"🔗 **Cross-Platform Account Linking**\n\n"
+                    f"Here is your temporary linking token: `{tok}` *(valid for 30 minutes)*.\n\n"
+                    f"**Next Steps:**\n"
+                    f"1. Open Slack, Telegram, or Discord (wherever your other account is).\n"
+                    f"2. Send `!link {tok}` to ThreadAgent.\n"
+                    f"3. Your accounts, conversation history, and roles will be synchronized across platforms!"
+                )
+        else:
+            final_answer = f"Tool '{tool}' executed."
+
+        new_trace = list(state.trace)
+        new_trace.append({
+            "step": "synthesis",
+            "agent_id": "synthesis_agent",
+            "agent_name": "ThreadAgent",
+            "status": "completed",
+            "message": f"Executed tool '{tool}' successfully.",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+        return {
+            "final_answer": final_answer,
+            "trace": new_trace
+        }
+
     # 2. GENERAL KNOWLEDGE / CONVERSATION BRANCH
     if state.intent_category == "GENERAL_KNOWLEDGE":
         q_lower = state.query.strip().lower()
         greetings = ("hello", "hi", "hey", "good morning", "good evening", "good afternoon", "greetings")
         is_greeting = any(q_lower.startswith(g) or q_lower == g for g in greetings) and len(q_lower.split()) <= 3
 
-        llm = get_llm()
-        if llm:
-            history_str = ""
-            if state.chat_history:
-                history_str = "Recent Conversation History:\n" + "\n".join([
-                    f"{h.get('role', 'user').capitalize()}: {h.get('content', '')}" for h in state.chat_history[-6:]
-                ]) + "\n\n"
+        history_str = ""
+        if state.chat_history:
+            history_str = "Recent Conversation History:\n" + "\n".join([
+                f"{h.get('role', 'user').capitalize()}: {h.get('content', '')}" for h in state.chat_history[-6:]
+            ]) + "\n\n"
 
-            system_prompt = f"""You are ThreadAgent, an intelligent and helpful AI community assistant for {ws.name}.
+        system_prompt = f"""You are ThreadAgent, an intelligent and helpful AI community assistant for {ws.name}.
 Persona Style: Friendly, clear, intelligent, and concise.
 
 You are conversing with a community member in an open developer channel.
@@ -385,24 +522,18 @@ Answer questions directly, politely, and accurately using your general knowledge
 
 {history_str}User Message: {state.query}
 """
-            try:
-                res = llm.invoke(system_prompt)
-                answer = res.content if hasattr(res, "content") else str(res)
-            except Exception as e:
-                print(f"[synthesis_node] Gemini LLM invocation failed: {e}")
-                if is_greeting:
-                    answer = f"Hello! I am ThreadAgent, your community assistant for {ws.name}."
-                else:
-                    answer = "I can't reach the language model right now. Please try again shortly."
+        llm = get_llm()
+        result_text = invoke_llm_with_fallback(llm, system_prompt)
+        if result_text:
+            answer = result_text
+        elif is_greeting:
+            answer = (
+                f"Hello! I am ThreadAgent, your community assistant for {ws.name}.\n\n"
+                f"I can help answer your technical questions, guide you on developer topics, and provide updates about our community events and records. "
+                f"Feel free to ask me anything or type `!events`, `!faq`, `!github`, or `!summary`!"
+            )
         else:
-            if is_greeting:
-                answer = (
-                    f"Hello! I am ThreadAgent, your community assistant for {ws.name}.\n\n"
-                    f"I can help answer your technical questions, guide you on developer topics, and provide updates about our community events and records. "
-                    f"Feel free to ask me anything or type `!events`, `!faq`, `!github`, or `!summary`!"
-                )
-            else:
-                answer = "I can't reach the language model right now. Please try again shortly."
+            answer = "I can't reach the language model right now. Please try again shortly."
 
         new_trace = list(state.trace)
         new_trace.append({
@@ -424,7 +555,7 @@ Answer questions directly, politely, and accurately using your general knowledge
     if not evidence or not evidence.sufficient_evidence or len(evidence.citations) == 0:
         final_answer = (
             f"Based on verified organizational records in **{ws.name}**, there is **insufficient evidence** to answer this inquiry.\n\n"
-            f"No authorized documentation matching '{state.query}' was found within your access scope."
+            f"No authorized documentation matching this inquiry was found within your access scope."
         )
         new_trace = list(state.trace)
         new_trace.append({
@@ -446,9 +577,7 @@ Answer questions directly, politely, and accurately using your general knowledge
         for c in evidence.citations
     ])
 
-    llm = get_llm()
-    if llm:
-        system_prompt = f"""You are ThreadAgent, the intelligent community assistant at {ws.name}.
+    system_prompt = f"""You are ThreadAgent, the intelligent community assistant at {ws.name}.
 
 Synthesize a clear, helpful, human-readable prose response answering the user's query based strictly on the verified EvidencePack below.
 
@@ -463,14 +592,12 @@ Verified EvidencePack:
 
 User Query: {state.query}
 """
-        try:
-            response = llm.invoke(system_prompt)
-            answer = response.content if hasattr(response, "content") else str(response)
-        except Exception as e:
-            print(f"[synthesis_node] LLM invocation failed: {e}")
-            answer = "I can't reach the language model right now. Please try again shortly."
+    llm = get_llm()
+    result_text = invoke_llm_with_fallback(llm, system_prompt)
+    if result_text:
+        answer = result_text
     else:
-        answer = "I can't reach the language model right now. Please try again shortly."
+        answer = f"Based on verified records for **{ws.name}**:\n\n{context_str}"
 
     new_trace = list(state.trace)
     new_trace.append({

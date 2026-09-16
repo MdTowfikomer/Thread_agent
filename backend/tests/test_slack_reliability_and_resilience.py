@@ -74,24 +74,27 @@ def test_duplicate_delivery_idempotency():
     """
     payload = make_slack_payload(event_id="evt_dup_test", ts="1600000000.000300")
 
-    # First delivery attempt
-    res1 = client.post(
-        "/api/webhooks/slack",
-        headers={"X-Slack-Signature": "fake", "X-Slack-Request-Timestamp": "1600000000"},
-        json=payload
-    )
-    assert res1.status_code == 200
-    assert res1.json()["status"] == "ok"
+    with patch("app.channels.outbound.SlackOutboundAdapter.send", return_value="1600000000.999"):
+        # First delivery attempt
+        res1 = client.post(
+            "/api/webhooks/slack",
+            headers={"X-Slack-Signature": "fake", "X-Slack-Request-Timestamp": "1600000000"},
+            json=payload
+        )
+        assert res1.status_code == 200
+        assert res1.json()["status"] == "ok"
 
-    # Second delivery attempt with exact same event_id / ts (Slack retry)
-    res2 = client.post(
-        "/api/webhooks/slack",
-        headers={"X-Slack-Signature": "fake", "X-Slack-Request-Timestamp": "1600000000"},
-        json=payload
-    )
-    assert res2.status_code in (200, 409)
-    data2 = res2.json()
-    assert data2["status"] == "duplicate" or res2.status_code == 409
+        time.sleep(0.2)
+
+        # Second delivery attempt with exact same event_id / ts (Slack retry)
+        res2 = client.post(
+            "/api/webhooks/slack",
+            headers={"X-Slack-Signature": "fake", "X-Slack-Request-Timestamp": "1600000000"},
+            json=payload
+        )
+        assert res2.status_code in (200, 409)
+        data2 = res2.json()
+        assert data2["status"] == "duplicate" or res2.status_code == 409
 
 
 def test_gemini_exception_returns_transparent_unavailable_message():
@@ -166,3 +169,51 @@ def test_supabase_failure_fails_closed_gracefully():
             json=payload
         )
         assert res.status_code == 200
+
+
+def test_slack_response_delivery_contract_regression():
+    """
+    Slack Regression Test (Item 5 Contract):
+      - Gemini returns [{"type": "text", "text": "Hello from Thread."}].
+      - app_mention receives 200 acknowledgement.
+      - one background delivery is attempted.
+      - chat.postMessage receives the exact plain string.
+      - graph invocation count is exactly one.
+      - no raw Python list, no user-query echo, and no formatter exception.
+    """
+    from app.graph.workflow import app_graph
+
+    payload = make_slack_payload(event_id="evt_slack_regression_1", ts="1600000000.000999", text="<@U12345> Hello agent!")
+
+    # 1. Gemini returns [{"type": "text", "text": "Hello from Thread."}]
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = MagicMock(content=[{"type": "text", "text": "Hello from Thread."}])
+
+    with patch("app.graph.workflow.get_llm", return_value=mock_llm):
+        with patch.object(app_graph, "invoke", wraps=app_graph.invoke) as mock_graph_invoke:
+            with patch("app.channels.outbound.SlackOutboundAdapter.send", return_value="1600000000.999") as mock_slack_send:
+                # 2. app_mention receives 200 acknowledgement
+                res = client.post(
+                    "/api/webhooks/slack",
+                    headers={"X-Slack-Signature": "fake", "X-Slack-Request-Timestamp": "1600000000"},
+                    json=payload
+                )
+                assert res.status_code == 200
+                assert res.json()["status"] == "ok"
+
+                time.sleep(0.3)
+
+                # 3. One background delivery is attempted
+                assert mock_slack_send.call_count == 1
+
+                # 4. chat.postMessage receives the exact plain string
+                sent_destination, sent_text, sent_key = mock_slack_send.call_args[0]
+                assert sent_text == "Hello from Thread."
+
+                # 5. Graph invocation count is exactly one
+                assert mock_graph_invoke.call_count == 1
+
+                # 6. No raw Python list, no user-query echo, and no formatter exception
+                assert "[" not in sent_text
+                assert "hello agent" not in sent_text.lower()
+

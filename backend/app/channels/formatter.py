@@ -1,29 +1,61 @@
+import json
 import re
-from typing import Optional
+from typing import Any, Optional
 from app.core.canonical import ChannelType
 
-def clean_debug_headers_and_footers(text: str) -> str:
+
+def coerce_model_text(value: Any) -> str:
+    """
+    Safely extract plain text from strings, lists, and provider content dictionaries.
+    Handles Gemini, LiteLLM, OpenAI, and LangChain model output structures:
+      - "Hello from Thread."
+      - [{"type": "text", "text": "Hello from Thread."}]
+      - [{"text": "Hello from Thread."}]
+      - {"type": "text", "text": "Hello from Thread."}
+      - ["Hello", "world"]
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts = [coerce_model_text(item) for item in value]
+        return " ".join([p for p in parts if p]).strip()
+    if isinstance(value, dict):
+        if "text" in value and isinstance(value["text"], str):
+            return value["text"]
+        if "content" in value:
+            return coerce_model_text(value["content"])
+        if "text" in value:
+            return coerce_model_text(value["text"])
+        return json.dumps(value) if value else ""
+    return str(value)
+
+
+def clean_debug_headers_and_footers(text: Any) -> str:
     """
     Strips internal debug headers (e.g. '**Context Update from...**')
     and debug footers (e.g. '*(Confidence: ... | Receipt ID: ...)*').
+    Defensively accepts Any and coerces structured content to plain text.
     """
-    if not text:
+    text_str = coerce_model_text(text)
+    if not text_str:
         return ""
 
     # Remove '**Context Update from ...**:' headers
-    text = re.sub(r"\*\*Context Update from[^*]+\*\*:\s*", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"Context Update from[^:\n]+:\s*", "", text, flags=re.IGNORECASE)
+    text_str = re.sub(r"\*\*Context Update from[^*]+\*\*:\s*", "", text_str, flags=re.IGNORECASE)
+    text_str = re.sub(r"Context Update from[^:\n]+:\s*", "", text_str, flags=re.IGNORECASE)
 
     # Remove '*(Confidence: ... | Receipt ID: ...)*' footers
-    text = re.sub(r"\*\s*\(\s*Confidence:[^*]+\*\s*", "", text, flags=re.IGNORECASE)
+    text_str = re.sub(r"\*\s*\(\s*Confidence:[^*]+\*\s*", "", text_str, flags=re.IGNORECASE)
     # Remove '*(Receipt ID: ... | Strategy: ...)*' footers
-    text = re.sub(r"\*\s*\(\s*Receipt ID:[^*]+\*\s*", "", text, flags=re.IGNORECASE)
+    text_str = re.sub(r"\*\s*\(\s*Receipt ID:[^*]+\*\s*", "", text_str, flags=re.IGNORECASE)
 
     # Strip leading/trailing blank lines
-    return text.strip()
+    return text_str.strip()
 
 
-def convert_markdown_to_telegram_html(text: str) -> str:
+def convert_markdown_to_telegram_html(text: Any) -> str:
     """
     Converts standard Markdown formatting to Telegram-compatible HTML tags:
       - **bold** -> <b>bold</b>
@@ -31,11 +63,13 @@ def convert_markdown_to_telegram_html(text: str) -> str:
       - `code` -> <code>code</code>
       - ```code block``` -> <pre>code block</pre>
     Escapes unhandled '<' and '>' characters for safety.
+    Defensively accepts Any and coerces structured content to plain text.
     """
-    if not text:
+    text_str = coerce_model_text(text)
+    if not text_str:
         return ""
 
-    cleaned = clean_debug_headers_and_footers(text)
+    cleaned = clean_debug_headers_and_footers(text_str)
 
     # Protect code blocks first using alphanumeric placeholders without underscores or asterisks
     code_blocks = []
@@ -81,18 +115,20 @@ def convert_markdown_to_telegram_html(text: str) -> str:
     return cleaned.strip()
 
 
-def convert_markdown_to_slack_mrkdwn(text: str) -> str:
+def convert_markdown_to_slack_mrkdwn(text: Any) -> str:
     """
     Converts standard Markdown formatting to Slack mrkdwn syntax:
       - **bold** -> *bold*
       - *italic* or _italic_ -> _italic_
       - `code` -> `code`
     Strips internal debug headers and footers.
+    Defensively accepts Any and coerces structured content to plain text.
     """
-    if not text:
+    text_str = coerce_model_text(text)
+    if not text_str:
         return ""
 
-    cleaned = clean_debug_headers_and_footers(text)
+    cleaned = clean_debug_headers_and_footers(text_str)
 
     # Protect code blocks and inline code
     code_blocks = []
@@ -127,22 +163,25 @@ def convert_markdown_to_slack_mrkdwn(text: str) -> str:
     return cleaned.strip()
 
 
-def format_response_for_platform(text: str, platform: ChannelType) -> str:
+def format_response_for_platform(text: Any, platform: ChannelType) -> str:
     """
     Format synthesized ThreadAgent response for a specific delivery channel platform.
     Strips raw debug headers/footers and applies platform-native markup.
+    Defensively accepts Any and coerces structured content to plain text.
     """
-    if not text:
+    text_str = coerce_model_text(text)
+    if not text_str:
         return ""
 
     if platform == ChannelType.TELEGRAM:
-        return convert_markdown_to_telegram_html(text)
+        return convert_markdown_to_telegram_html(text_str)
     elif platform == ChannelType.SLACK:
-        return convert_markdown_to_slack_mrkdwn(text)
+        return convert_markdown_to_slack_mrkdwn(text_str)
     else: # Discord or default
-        cleaned = clean_debug_headers_and_footers(text)
+        cleaned = clean_debug_headers_and_footers(text_str)
         # Safety sweep for Discord too
         cleaned = re.sub(r"XINLINECODEX\d+X", "", cleaned)
         cleaned = re.sub(r"XCODEBLOCKX\d+X", "", cleaned)
         cleaned = re.sub(r"___INLINE_CODE_\d+___", "", cleaned)
         return cleaned.strip()
+

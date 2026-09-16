@@ -12,6 +12,8 @@ from app.graph.workflow import app_graph
 from app.memory.conversation import conversation_store
 from app.channels.outbound import channel_message_delivery_service
 
+from app.channels.formatter import coerce_model_text
+
 logger = logging.getLogger(__name__)
 
 
@@ -66,21 +68,12 @@ def validate_output(
     Shared pre-send output validator.
     Blocks outputs substantially echoing the current query or recent user conversation turns.
     On LLM failure or empty response, returns a brief, transparent unavailable response.
+    Defensively coerces model content structures to plain text first.
     """
-    if isinstance(output_text, list):
-        text_parts = []
-        for item in output_text:
-            if isinstance(item, dict):
-                text_parts.append(str(item.get("text") or item.get("content") or ""))
-            else:
-                text_parts.append(str(item))
-        output_text = " ".join([t for t in text_parts if t])
-    elif not isinstance(output_text, str):
-        output_text = str(output_text or "")
-
+    output_text = coerce_model_text(output_text)
     cleaned = output_text.strip()
 
-    if not cleaned:
+    if not cleaned or cleaned == "I can't reach the language model right now. Please try again shortly.":
         return "I can't reach the language model right now. Please try again shortly."
 
     if is_substantially_echoing(cleaned, query, recent_user_turns):
@@ -223,7 +216,7 @@ class InboundAgentQueryService:
         triggering_message_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Execute agent query and deliver response to destination channel (Discord, Slack, Telegram).
+        Execute agent query once via process_query, validate output, and deliver using send_prepared_message exactly once.
         Ensures triggering message ID is marked in agent ledger and excluded from retrieval.
         """
         if triggering_message_id:
@@ -233,24 +226,54 @@ class InboundAgentQueryService:
         if triggering_message_id and triggering_message_id not in all_exclude:
             all_exclude.append(triggering_message_id)
 
+        # 1. Call process_query() once
+        query_res = self.process_query(
+            query=query,
+            organization_id=principal.organization_id,
+            principal=principal,
+            platform=platform,
+            destination_id=destination_id,
+            exclude_message_ids=all_exclude if all_exclude else None
+        )
+
+        # 2. Use its answer after validate_output()
         session_key = conversation_store.format_session_key(platform.value, destination_id, principal.user_id)
         recent_turns = conversation_store.get_recent_turns(session_key=session_key, organization_id=principal.organization_id, limit=10)
         user_turn_texts = [t.get("content", "") for t in recent_turns if t.get("role") == "user"]
 
-        delivery_res = channel_message_delivery_service.send_message(
+        raw_answer = query_res.get("answer") or query_res.get("final_answer") or ""
+        validated_ans = validate_output(
+            output_text=raw_answer,
+            query=query,
+            recent_user_turns=user_turn_texts,
+            intent_category=query_res.get("intent_category")
+        )
+
+        raw_key = idempotency_key
+        if not raw_key:
+            rcpt = query_res.get("receipt")
+            rcpt_id = rcpt.get("receipt_id") if isinstance(rcpt, dict) else (getattr(rcpt, "receipt_id", None) if rcpt else None)
+            if rcpt_id:
+                raw_key = f"receipt_{rcpt_id}"
+            elif triggering_message_id:
+                raw_key = f"msg_{triggering_message_id}"
+
+        # 3. Call send_prepared_message() exactly once
+        delivery_res = channel_message_delivery_service.send_prepared_message(
             principal=principal,
             platform=platform,
             destination_id=destination_id,
-            query=query,
-            idempotency_key=idempotency_key,
-            exclude_message_ids=all_exclude if all_exclude else None
+            text=validated_ans,
+            citations=query_res.get("citations"),
+            receipt=query_res.get("receipt"),
+            idempotency_key=raw_key
         )
 
-        final_ans = delivery_res.get("final_answer") or delivery_res.get("answer") or ""
-        validated_ans = validate_output(final_ans, query, user_turn_texts)
-
-        delivery_res["final_answer"] = validated_ans
         delivery_res["answer"] = validated_ans
+        delivery_res["final_answer"] = validated_ans
+        delivery_res["query"] = query
+        delivery_res["intent_category"] = query_res.get("intent_category")
+        delivery_res["role_agent"] = query_res.get("role_agent")
         return delivery_res
 
 

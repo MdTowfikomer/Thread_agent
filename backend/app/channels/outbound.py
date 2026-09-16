@@ -243,7 +243,27 @@ class ChannelMessageDeliveryService:
         query: str,
         idempotency_key: Optional[str] = None,
         exclude_message_ids: Optional[List[str]] = None
-    ):
+    ) -> Dict[str, Any]:
+        """Backward compatibility alias delegating to synthesize_and_send."""
+        return self.synthesize_and_send(
+            principal=principal,
+            platform=platform,
+            destination_id=destination_id,
+            query=query,
+            idempotency_key=idempotency_key,
+            exclude_message_ids=exclude_message_ids
+        )
+
+    def synthesize_and_send(
+        self,
+        principal: AuthenticatedPrincipal,
+        platform: ChannelType,
+        destination_id: str,
+        query: str,
+        idempotency_key: Optional[str] = None,
+        exclude_message_ids: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """Path 1: Synthesize response via graph run for explicit server/API requests, then deliver."""
         if not query.strip():
             raise ValueError("Query cannot be empty.")
 
@@ -273,7 +293,6 @@ class ChannelMessageDeliveryService:
         destination = self._resolve_destination(platform, destination_id, principal.organization_id)
 
         if intent == "ORGANIZATIONAL_FACTS" and evidence and getattr(evidence, "citations", []):
-            # Enforce destination ACL: check destination channel policy against citation permissions
             guild_id = destination.get("guild_id") or destination.get("team_id")
             dest_policy = channel_policy_store.get_policy(
                 principal.organization_id, platform, destination_id, guild_id
@@ -294,7 +313,6 @@ class ChannelMessageDeliveryService:
             receipt_id = "direct_synthesis"
             raw_key = idempotency_key or hashlib.sha256(f"{principal.user_id}:{query}:{datetime.now(timezone.utc).isoformat()}".encode()).hexdigest()
 
-        # Scope user-supplied idempotency key by organization, initiating user, platform, and destination
         key = hashlib.sha256(
             f"{principal.organization_id}:{principal.user_id}:{platform.value}:{destination_id}:{raw_key}".encode()
         ).hexdigest()
@@ -335,6 +353,104 @@ class ChannelMessageDeliveryService:
             "citations": citations,
             "destination": destination,
             "final_answer": outbound_text
+        }
+
+    def send_prepared_message(
+        self,
+        principal: AuthenticatedPrincipal,
+        platform: ChannelType,
+        destination_id: str,
+        text: Any,
+        citations: Optional[List[Any]] = None,
+        receipt: Optional[Any] = None,
+        idempotency_key: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Path 2: Deliver an already validated plain-text answer without invoking app_graph."""
+        outbound_text = format_response_for_platform(text, platform)
+        if not outbound_text.strip():
+            raise ValueError("Text cannot be empty.")
+
+        destination = self._resolve_destination(platform, destination_id, principal.organization_id)
+
+        serialized_citations = []
+        if citations:
+            guild_id = destination.get("guild_id") or destination.get("team_id")
+            dest_policy = channel_policy_store.get_policy(
+                principal.organization_id, platform, destination_id, guild_id
+            )
+            dest_scope = dest_policy.permission_scope if dest_policy and dest_policy.is_active else PermissionLevel.PUBLIC_COMMUNITY
+            for c in citations:
+                perm_val = c.get("permission") if isinstance(c, dict) else getattr(c, "permission", PermissionLevel.PUBLIC_COMMUNITY)
+                perm_enum = PermissionLevel(perm_val) if isinstance(perm_val, str) else perm_val
+                if perm_enum == PermissionLevel.PENDING_REVIEW:
+                    raise PermissionError("Evidence with PENDING_REVIEW permission is never sendable.")
+                if dest_scope == PermissionLevel.PUBLIC_COMMUNITY and perm_enum != PermissionLevel.PUBLIC_COMMUNITY:
+                    raise PermissionError(
+                        f"Destination channel '{destination_id}' is PUBLIC_COMMUNITY but evidence contains '{perm_enum.value}' citations."
+                    )
+                if isinstance(c, dict):
+                    serialized_citations.append(c)
+                else:
+                    serialized_citations.append({
+                        "item_id": getattr(c, "item_id", ""),
+                        "source": getattr(c.source, "value", str(c.source)) if hasattr(c, "source") else "source",
+                        "source_uri": getattr(c, "source_uri", ""),
+                        "permission": perm_enum.value,
+                        "relevance_score": getattr(c, "relevance_score", 0.0)
+                    })
+
+        receipt_id = None
+        if receipt:
+            if isinstance(receipt, dict):
+                receipt_id = receipt.get("receipt_id")
+            else:
+                receipt_id = getattr(receipt, "receipt_id", None)
+        if not receipt_id:
+            receipt_id = "prepared_msg"
+
+        raw_key = idempotency_key or f"receipt_{receipt_id}"
+        key = self.scope_idempotency_key(principal.organization_id, principal.user_id, platform, destination_id, raw_key)
+
+        claimed, existing = self.audit_store.claim(key, {
+            "platform": platform.value,
+            "organization_id": principal.organization_id,
+            "destination": destination,
+            "initiating_user_id": principal.user_id,
+            "retrieval_receipt_id": receipt_id,
+            "source_citations": serialized_citations,
+            "timestamp": datetime.now(timezone.utc),
+            "raw_idempotency_key": raw_key,
+        })
+        if not claimed:
+            curr_st = existing.get("status") if existing else "duplicate"
+            if curr_st == "unknown":
+                return {
+                    "status": "unknown",
+                    "delivery_id": existing["id"],
+                    "provider_response_id": existing.get("provider_response_id"),
+                    "message": "Delivery status unknown due to prior provider timeout. Automatic re-post is blocked.",
+                }
+            return {"status": "duplicate", "delivery_id": existing["id"], "provider_response_id": existing.get("provider_response_id")}
+
+        try:
+            provider_id = self.adapters[platform].send(destination, outbound_text, key)
+            self.audit_store.finish(key, "sent", provider_id)
+        except OutboundTimeoutError:
+            self.audit_store.finish(key, "unknown", None)
+            raise
+        except Exception:
+            self.audit_store.finish(key, "failed", None)
+            raise
+
+        return {
+            "status": "sent",
+            "delivery_id": key,
+            "provider_response_id": provider_id,
+            "retrieval_receipt_id": receipt_id,
+            "citations": serialized_citations,
+            "destination": destination,
+            "final_answer": outbound_text,
+            "answer": outbound_text,
         }
 
 

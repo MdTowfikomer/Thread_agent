@@ -990,22 +990,23 @@ def test_discord_gateway_bot_mention_reply(monkeypatch):
         )
 
         send_calls = []
-        def mock_send_message(principal, platform, destination_id, query, idempotency_key):
+        def mock_send_prepared_message(principal, platform, destination_id, text, citations=None, receipt=None, idempotency_key=None, **kwargs):
             send_calls.append({
                 "principal": principal,
                 "platform": platform,
                 "destination_id": destination_id,
-                "query": query,
+                "text": text,
                 "idempotency_key": idempotency_key
             })
             return {"status": "sent"}
 
-        monkeypatch.setattr(channel_message_delivery_service, "send_message", mock_send_message)
+        monkeypatch.setattr(channel_message_delivery_service, "send_prepared_message", mock_send_prepared_message)
+        monkeypatch.setattr(channel_message_delivery_service, "send_message", mock_send_prepared_message)
 
         await discord_gateway_bot.handle_discord_mention_reply(message, client)
 
         assert len(send_calls) == 1
-        assert send_calls[0]["query"] == "What is GDG MCET?"
+        assert "insufficient evidence" in send_calls[0]["text"].lower() or "gdg mcet" in send_calls[0]["text"].lower()
         assert send_calls[0]["platform"] == ChannelType.DISCORD
         assert send_calls[0]["destination_id"] == "1549162457359065110"
 

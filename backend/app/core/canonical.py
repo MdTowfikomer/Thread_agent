@@ -26,6 +26,7 @@ class ChannelType(str, Enum):
     GITHUB = "github"
     TELEGRAM = "telegram"
     WHATSAPP = "whatsapp"
+    WEB_CHAT = "web_chat"
 
 class LinkVerificationType(str, Enum):
     OAUTH_VERIFIED = "oauth_verified"

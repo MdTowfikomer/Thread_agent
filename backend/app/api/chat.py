@@ -7,6 +7,8 @@ from app.core.auth import AuthenticatedPrincipal, get_current_principal
 from app.graph.state import GraphState
 from app.graph.workflow import app_graph
 
+from app.channels.inbound_service import inbound_agent_query_service, ChannelType
+
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
 class ChatRequest(BaseModel):
@@ -40,42 +42,25 @@ async def chat_endpoint(
             detail=f"Forbidden: Cross-organization access is denied. Requested '{req.organization_id}', principal is '{principal.organization_id}'."
         )
 
-    # Authoritative permissions derived exclusively from verified AuthenticatedPrincipal
-    initial_state = GraphState(
-        query=req.query,
-        organization_id=principal.organization_id,
-        access_context=principal.access_context
-    )
-
     try:
-        result = app_graph.invoke(initial_state)
-        
-        ws = get_workspace(principal.organization_id)
-        role_id = result.get("target_role_id", ws.default_role_id)
-        role_info = get_role_agent(principal.organization_id, role_id)
-        evidence_pack = result.get("evidence_pack")
-
-        citations = evidence_pack.citations if evidence_pack else []
-        confidence = evidence_pack.confidence_score if evidence_pack else 0.0
-        sufficient = evidence_pack.sufficient_evidence if evidence_pack else False
-        receipt_dict = evidence_pack.receipt.model_dump() if evidence_pack and evidence_pack.receipt else None
+        res = inbound_agent_query_service.process_query(
+            query=req.query,
+            organization_id=principal.organization_id,
+            principal=principal,
+            platform=ChannelType.WEB_CHAT,
+            destination_id="web_chat"
+        )
 
         return ChatResponse(
-            query=req.query,
-            answer=result.get("final_answer", ""),
-            role_agent={
-                "id": role_info.id if role_info else role_id,
-                "name": role_info.name if role_info else "Thread Agent",
-                "role": role_info.role if role_info else "Lead",
-                "avatar": role_info.avatar if role_info else "",
-                "department": role_info.department if role_info else "Core"
-            },
-            citations=citations,
-            confidence_score=confidence,
-            trace=result.get("trace", []),
+            query=res["query"],
+            answer=res["answer"],
+            role_agent=res["role_agent"],
+            citations=res["citations"],
+            confidence_score=res["confidence_score"],
+            trace=res["trace"],
             organization_id=principal.organization_id,
-            receipt=receipt_dict,
-            sufficient_evidence=sufficient
+            receipt=res["receipt"],
+            sufficient_evidence=res["sufficient_evidence"]
         )
     except Exception as e:
         import traceback

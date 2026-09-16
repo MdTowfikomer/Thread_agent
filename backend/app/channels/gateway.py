@@ -191,6 +191,24 @@ class DiscordGatewayBot:
         if not policy or not policy.is_active:
             return None
 
+        bot_user = getattr(self._client, "user", None)
+        is_bot_mentioned = bool(
+            bot_user and (
+                bot_user in message.mentions
+                or f"<@{bot_user.id}>" in message.content
+                or f"<@!{bot_user.id}>" in message.content
+            )
+        )
+        is_reply_to_bot = bool(
+            bot_user and message.reference and message.reference.resolved
+            and getattr(message.reference.resolved, "author", None) == bot_user
+        )
+
+        from app.channels.inbound_service import inbound_agent_query_service
+        if is_bot_mentioned or is_reply_to_bot or inbound_agent_query_service.is_agent_message(str(message.id)):
+            inbound_agent_query_service.mark_agent_message(str(message.id))
+            return None
+
         channel_msg = ChannelMessage(
             organization_id=org_id,
             channel_type=ChannelType.DISCORD,
@@ -224,8 +242,6 @@ class DiscordGatewayBot:
         if not org_id:
             return
 
-        # Finding 3: A Discord reply must require an existing active server-owned ChannelPolicy
-        # for that exact guild and channel. For an unbound channel, do not reply.
         from app.channels.policy import channel_policy_store
         policy = channel_policy_store.get_policy(org_id, ChannelType.DISCORD, str(message.channel.id), guild_id)
         if not policy or not policy.is_active:
@@ -253,6 +269,9 @@ class DiscordGatewayBot:
         if not (is_bot_mentioned or is_reply_to_bot):
             return
 
+        from app.channels.inbound_service import inbound_agent_query_service
+        inbound_agent_query_service.mark_agent_message(str(message.id))
+
         import re
         clean_query = re.sub(rf"<@!?{re.escape(str(bot_user.id))}>", "", message.content).strip()
         if not clean_query:
@@ -264,7 +283,6 @@ class DiscordGatewayBot:
                 from app.identity.service import identity_service
                 from app.core.membership import membership_store
                 from app.core.auth import AuthenticatedPrincipal
-                from app.channels.outbound import channel_message_delivery_service
                 from app.core.canonical import PermissionLevel
 
                 author_id = str(message.author.id)
@@ -288,16 +306,16 @@ class DiscordGatewayBot:
                     access_context=access_context,
                 )
 
-                # Channel policy was already validated active above
                 reply_idempotency_key = f"discord_reply_{guild_id}_{message.channel.id}_{message.id}"
 
                 send_result = await asyncio.to_thread(
-                    channel_message_delivery_service.send_message,
+                    inbound_agent_query_service.process_and_deliver,
                     principal=principal,
                     platform=ChannelType.DISCORD,
                     destination_id=str(message.channel.id),
                     query=clean_query,
                     idempotency_key=reply_idempotency_key,
+                    triggering_message_id=str(message.id)
                 )
 
                 if send_result.get("status") == "insufficient_evidence":

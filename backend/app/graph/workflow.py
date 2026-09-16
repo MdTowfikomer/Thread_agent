@@ -23,7 +23,7 @@ def get_llm():
     if api_key:
         try:
             from langchain_google_genai import ChatGoogleGenerativeAI
-            gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+            gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
             return ChatGoogleGenerativeAI(
                 model=gemini_model,
                 google_api_key=api_key,
@@ -99,6 +99,39 @@ def classify_intent_and_routing(query: str, ws) -> Tuple[str, Optional[str], Opt
 
     is_org_query = any(ind in q_lower for ind in org_indicators)
 
+    # 3. Conversational, capability, status, and greeting queries route to GENERAL_KNOWLEDGE
+    greetings = ("hello", "hi", "hey", "good morning", "good evening", "good afternoon", "greetings")
+    conversational_phrases = (
+        "how are you", "who are you", "what can you do", "what tools do you have", "what tools have you got",
+        "can you see this", "can u see this", "are you online", "is this working", "status", "ping", "test",
+        "help me", "can you help", "tell me about yourself", "what is your name", "capabilities"
+    )
+    if (
+        q_lower in greetings
+        or any(q_lower.startswith(g) for g in greetings)
+        or any(p in q_lower for p in conversational_phrases)
+    ):
+        return "GENERAL_KNOWLEDGE", None, None, ws.roles[0]
+
+    if is_org_query:
+        best_role = ws.roles[0]
+        for role in ws.roles:
+            for tag in role.expertise:
+                if tag.lower() in q_lower:
+                    best_role = role
+                    break
+        return "ORGANIZATIONAL_FACTS", None, None, best_role
+
+    # 4. Broad educational/conceptual questions route to GENERAL_KNOWLEDGE
+    general_question_starters = (
+        "what is ", "what is a ", "what is an ", "what is the ", "what are ", "what are the ",
+        "define ", "explain ", "can you explain", "can u explain", "could you explain", "how does ", "how do ",
+        "why does ", "why do ", "difference between", "what is the difference", "tell me about ", "write a ", "how to "
+    )
+
+    if any(q_lower.startswith(s) for s in general_question_starters) or q_lower.startswith("what is") or q_lower.startswith("explain") or q_lower.startswith("define"):
+        return "GENERAL_KNOWLEDGE", None, None, ws.roles[0]
+
     best_role = ws.roles[0]
     matched_expertise = False
     for role in ws.roles:
@@ -110,33 +143,10 @@ def classify_intent_and_routing(query: str, ws) -> Tuple[str, Optional[str], Opt
         if matched_expertise:
             break
 
-    if is_org_query:
-        return "ORGANIZATIONAL_FACTS", None, None, best_role
-
-    # 3. Broad educational/conceptual questions route to GENERAL_KNOWLEDGE
-    general_question_starters = (
-        "what is ", "what is a ", "what is an ", "what is the ", "what are ", "what are the ",
-        "define ", "explain ", "can you explain", "can u explain", "could you explain", "how does ", "how do ",
-        "why does ", "why do ", "difference between", "what is the difference", "tell me about ", "write a ", "how to "
-    )
-
-    if any(q_lower.startswith(s) for s in general_question_starters) or q_lower.startswith("what is") or q_lower.startswith("explain") or q_lower.startswith("define"):
-        return "GENERAL_KNOWLEDGE", None, None, ws.roles[0]
-
     if matched_expertise:
         return "ORGANIZATIONAL_FACTS", None, None, best_role
 
-    # Greetings & small talk
-    greetings = ("hello", "hi", "hey", "good morning", "good evening", "good afternoon", "greetings")
-    conversational_phrases = ("how are you", "who are you", "what can you do", "help me", "can you help", "tell me about yourself", "what is your name")
-    if (
-        any(q_lower.startswith(g) for g in greetings)
-        or any(p in q_lower for p in conversational_phrases)
-        or q_lower in greetings
-    ):
-        return "GENERAL_KNOWLEDGE", None, None, ws.roles[0]
-
-    return "ORGANIZATIONAL_FACTS", None, None, best_role
+    return "GENERAL_KNOWLEDGE", None, None, ws.roles[0]
 
 
 # --- NODE 1: TRIAGE ROUTER ---
@@ -456,10 +466,11 @@ User Query: {state.query}
         try:
             response = llm.invoke(system_prompt)
             answer = response.content if hasattr(response, "content") else str(response)
-        except Exception:
-            answer = _fallback_synthesis(role_name, role_title, evidence)
+        except Exception as e:
+            print(f"[synthesis_node] LLM invocation failed: {e}")
+            answer = "I can't reach the language model right now. Please try again shortly."
     else:
-        answer = _fallback_synthesis(role_name, role_title, evidence)
+        answer = "I can't reach the language model right now. Please try again shortly."
 
     new_trace = list(state.trace)
     new_trace.append({
@@ -475,22 +486,6 @@ User Query: {state.query}
         "final_answer": answer,
         "trace": new_trace
     }
-
-
-def _fallback_synthesis(role_name: str, role_title: str, evidence) -> str:
-    if evidence and evidence.citations:
-        cleaned_snippets = []
-        for c in evidence.citations[:3]:
-            snip = c.snippet.strip()
-            if "Context Update from" in snip:
-                lines = [l for l in snip.splitlines() if not l.startswith("**Context Update") and not l.startswith("Based on our verified")]
-                snip = " ".join(lines).strip()
-            if snip:
-                cleaned_snippets.append(snip)
-
-        narrative = "\n\n".join(cleaned_snippets)
-        return narrative if narrative else "No verified details found for this inquiry."
-    return "Based on verified organizational records, no matching authorized documentation was found."
 
 
 # Build & Compile Graph

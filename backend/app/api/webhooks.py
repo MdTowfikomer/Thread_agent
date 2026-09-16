@@ -577,44 +577,6 @@ async def handle_telegram_webhook(request: Request):
             "message": "Only text messages are supported."
         }
 
-    # 7. Parse and Transactionally Persist Message
-    try:
-        try:
-            event = telegram_connector.parse_webhook_update(payload, org_id)
-            if not event:
-                webhook_delivery_store.mark_completed(delivery_id)
-                return {
-                    "status": "ignored",
-                    "delivery_id": delivery_id,
-                    "organization_id": org_id,
-                    "message": "Message could not be parsed."
-                }
-        except Exception as e:
-            logger.error(f"Error parsing Telegram update for delivery {delivery_id}: {e}")
-            webhook_delivery_store.mark_failed(delivery_id, f"Parse error: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Malformed or unparseable payload for Telegram message: {e}"
-            )
-
-        record, chunks, receipt = telegram_connector.ingest_message(event)
-        ok, _ = memory_repository.persist_record_and_chunks(record, chunks)
-        if not ok:
-            raise RuntimeError("Failed to persist record and chunks to memory repository.")
-
-        webhook_delivery_store.mark_completed(delivery_id)
-
-    except Exception as e:
-        logger.error(f"Telegram webhook processing failure for delivery {delivery_id}: {e}")
-        webhook_delivery_store.mark_failed(delivery_id, str(e))
-        if isinstance(e, HTTPException):
-            raise
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Telegram ingestion error: {e}"
-        )
-
-    # 8. Interactive Mention & Direct Interaction Handling
     raw_text = str(text).strip()
     chat_type = str(chat.get("type") or "group")
     is_private = chat_type == "private"
@@ -640,8 +602,15 @@ async def handle_telegram_webhook(request: Request):
 
     should_reply = is_private or is_bot_mention_entity or has_text_mention or is_reply_to_bot
 
+    from app.channels.inbound_service import inbound_agent_query_service
+
+    # 7. Agent-Directed Branch: Process via InboundAgentQueryService without source_record ingestion
     if should_reply:
-        reply_delivery_id = f"tg_reply_{chat_id}_{event.message_id}"
+        msg_id_str = str(message.get("message_id") or delivery_id)
+        inbound_agent_query_service.mark_agent_message(msg_id_str)
+        inbound_agent_query_service.mark_agent_message(delivery_id)
+
+        reply_delivery_id = f"tg_reply_{chat_id}_{msg_id_str}"
         can_reply, reply_status, reply_msg = webhook_delivery_store.claim_delivery(
             delivery_id=reply_delivery_id,
             organization_id=org_id,
@@ -675,6 +644,7 @@ async def handle_telegram_webhook(request: Request):
                         reply_delivery_id,
                     )
                     webhook_delivery_store.mark_completed(reply_delivery_id)
+                    webhook_delivery_store.mark_completed(delivery_id)
                     return {
                         "status": "responded",
                         "channel": "telegram",
@@ -710,13 +680,14 @@ async def handle_telegram_webhook(request: Request):
                         channel_name=chat.get("title") or chat.get("username") or "Telegram Chat",
                     )
 
-                send_result = channel_message_delivery_service.send_message(
+                send_result = inbound_agent_query_service.process_and_deliver(
                     principal=principal,
                     platform=ChannelType.TELEGRAM,
                     destination_id=chat_id,
                     query=clean_query,
                     idempotency_key=reply_delivery_id,
-                    exclude_message_ids=[str(event.message_id), record.id, delivery_id]
+                    exclude_message_ids=[msg_id_str, delivery_id, reply_delivery_id],
+                    triggering_message_id=msg_id_str
                 )
 
                 if send_result.get("status") == "insufficient_evidence":
@@ -727,42 +698,120 @@ async def handle_telegram_webhook(request: Request):
                     )
 
                 webhook_delivery_store.mark_completed(reply_delivery_id)
+                webhook_delivery_store.mark_completed(delivery_id)
                 return {
                     "status": "responded",
                     "channel": "telegram",
                     "organization_id": org_id,
                     "delivery_id": delivery_id,
                     "reply_delivery_id": reply_delivery_id,
-                    "chat_id": event.chat_id,
-                    "message_id": event.message_id,
-                    "record_id": record.id,
-                    "chunk_ids": [c.id for c in chunks],
+                    "chat_id": chat_id,
+                    "message_id": msg_id_str,
                     "send_result": send_result,
                 }
             except Exception as e:
                 logger.error(f"Telegram mention reply error for delivery {delivery_id}: {e}")
                 webhook_delivery_store.mark_failed(reply_delivery_id, str(e))
+                webhook_delivery_store.mark_failed(delivery_id, str(e))
                 return {
                     "status": "reply_failed",
                     "delivery_id": delivery_id,
                     "error": str(e),
                 }
 
-    return {
-        "status": "ingested",
-        "channel": "telegram",
-        "organization_id": org_id,
-        "delivery_id": delivery_id,
-        "chat_id": event.chat_id,
-        "message_id": event.message_id,
-        "record_id": record.id,
-        "chunk_ids": [c.id for c in chunks]
-    }
+    # 8. Ordinary Non-Agent Channel Discussion Ingestion (canonical source_records)
+    try:
+        event = telegram_connector.parse_webhook_update(payload, org_id)
+        if not event or inbound_agent_query_service.is_agent_message(str(event.message_id)):
+            webhook_delivery_store.mark_completed(delivery_id)
+            return {
+                "status": "ignored",
+                "delivery_id": delivery_id,
+                "organization_id": org_id,
+                "message": "Message ignored or already handled as agent query."
+            }
+
+        record, chunks, receipt = telegram_connector.ingest_message(event)
+        ok, _ = memory_repository.persist_record_and_chunks(record, chunks)
+        if not ok:
+            raise RuntimeError("Failed to persist record and chunks to memory repository.")
+
+        webhook_delivery_store.mark_completed(delivery_id)
+        return {
+            "status": "ingested",
+            "channel": "telegram",
+            "organization_id": org_id,
+            "delivery_id": delivery_id,
+            "chat_id": event.chat_id,
+            "message_id": event.message_id,
+            "record_id": record.id,
+            "chunk_ids": [c.id for c in chunks]
+        }
+    except Exception as e:
+        logger.error(f"Telegram webhook processing failure for delivery {delivery_id}: {e}")
+        webhook_delivery_store.mark_failed(delivery_id, str(e))
+        if isinstance(e, HTTPException):
+            raise
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Telegram ingestion error: {e}"
+        )
+
+
+async def _process_slack_app_mention_background(
+    principal: AuthenticatedPrincipal,
+    channel_id: str,
+    query: str,
+    reply_delivery_id: str,
+    event_delivery_id: str,
+    event_id: str,
+    team_id: str,
+    event_ts: str
+):
+    """Background worker executing synthesis and Slack outbound posting after HTTP 200 acknowledgement."""
+    try:
+        from app.channels.inbound_service import inbound_agent_query_service
+        send_result = inbound_agent_query_service.process_and_deliver(
+            principal=principal,
+            platform=ChannelType.SLACK,
+            destination_id=channel_id,
+            query=query,
+            idempotency_key=reply_delivery_id,
+            exclude_message_ids=[event_ts, event_id, reply_delivery_id],
+            triggering_message_id=event_ts
+        )
+        webhook_delivery_store.mark_completed(reply_delivery_id)
+        webhook_delivery_store.mark_completed(event_delivery_id)
+    except Exception as exc:
+        logger.exception(
+            "[Slack App Mention Exception] Event processing error in background worker",
+            extra={
+                "event_id": event_id,
+                "team_id": team_id,
+                "channel_id": channel_id,
+                "event_ts": event_ts,
+                "delivery_id": reply_delivery_id,
+                "processing_phase": "synthesis_and_delivery",
+                "exception_type": type(exc).__name__,
+            }
+        )
+        webhook_delivery_store.mark_failed(reply_delivery_id, str(exc))
+        webhook_delivery_store.mark_failed(event_delivery_id, str(exc))
+        try:
+            from app.channels.outbound import SlackOutboundAdapter
+            adapter = SlackOutboundAdapter()
+            adapter.send(
+                {"channel_id": channel_id},
+                "I can't reach the language model right now. Please try again shortly.",
+                f"{reply_delivery_id}_fallback"
+            )
+        except Exception:
+            pass
 
 
 @router.post("/slack")
-async def handle_slack_events(request: Request):
-    """Ingest verified Slack Events API message events and handle app_mention queries."""
+async def handle_slack_events(request: Request, background_tasks: BackgroundTasks):
+    """Ingest verified Slack Events API message events and handle app_mention queries with sub-3s HTTP 200 acknowledgement."""
     body_bytes = await request.body()
     if not verify_slack_signature(
         request.headers.get("X-Slack-Signature"),
@@ -815,34 +864,15 @@ async def handle_slack_events(request: Request):
     # Canonical message identifier for deduplicating message ingestion
     msg_canonical_id = f"slack_msg_{team_id}_{channel_id}_{event_ts}" if event_ts else event_delivery_id
 
-    # 4. Dedicated app_mention branch before parse_event()
+    from app.channels.inbound_service import inbound_agent_query_service
+
+    # 4. Dedicated app_mention branch: fast HTTP 200 acknowledgement, background worker execution
     if event_type == "app_mention":
         try:
-            # A. Ingest the human message into Supabase (if not already ingested via message.channels)
-            can_ingest, _, _ = webhook_delivery_store.claim_delivery(
-                delivery_id=msg_canonical_id,
-                organization_id=org_id,
-                channel_type="slack",
-                event_type="message",
-                repository_id=channel_id,
-            )
-            record = None
-            chunks = []
-            if can_ingest:
-                try:
-                    parsed_msg = slack_connector.parse_event(payload, org_id)
-                    if parsed_msg:
-                        record, chunks, _ = slack_connector.ingest_message(parsed_msg)
-                        ok, _ = memory_repository.persist_record_and_chunks(record, chunks)
-                        if ok:
-                            webhook_delivery_store.mark_completed(msg_canonical_id)
-                        else:
-                            webhook_delivery_store.mark_failed(msg_canonical_id, "Persistence failed.")
-                except Exception as ingest_err:
-                    logger.warning(f"Failed to ingest mention message {msg_canonical_id}: {ingest_err}")
-                    webhook_delivery_store.mark_failed(msg_canonical_id, str(ingest_err))
+            inbound_agent_query_service.mark_agent_message(msg_canonical_id)
+            inbound_agent_query_service.mark_agent_message(event_ts)
+            inbound_agent_query_service.mark_agent_message(event_id)
 
-            # B. Durable delivery ledger for mention reply response
             reply_delivery_id = f"slack_reply_{team_id}_{channel_id}_{event_ts}" if event_ts else f"slack_reply_{event_id}"
             can_reply, reply_claim_status, reply_claim_msg = webhook_delivery_store.claim_delivery(
                 delivery_id=reply_delivery_id,
@@ -857,7 +887,6 @@ async def handle_slack_events(request: Request):
                     return {"status": "duplicate", "event_id": event_id, "delivery_id": reply_delivery_id}
                 raise HTTPException(status_code=409, detail=reply_claim_msg or "Mention reply already processing.")
 
-            # C. Extract query and remove only the bot mention
             raw_text = str(event.get("text") or "")
             authorizations = payload.get("authorizations") or []
             bot_user_id = authorizations[0].get("user_id") if authorizations else None
@@ -866,7 +895,6 @@ async def handle_slack_events(request: Request):
             else:
                 query = re.sub(r"<@[A-Z0-9]+(?:\|[^>]*)?>", "", raw_text, count=1).strip()
 
-            # D. Resolve the Slack author through the identity service
             user_id = str(event.get("user") or "")
             author_name = str(event.get("user_name") or user_id)
             link = identity_service.resolve_identity(
@@ -886,44 +914,64 @@ async def handle_slack_events(request: Request):
                 access_context=access_context,
             )
 
-            # E. Run authorized retrieval, destination ACL check, and post grounded answer back to bound channel
-            exclude_ids = [str(event_ts), event_id, msg_canonical_id, reply_delivery_id]
-            if record:
-                exclude_ids.append(record.id)
-
-            send_result = channel_message_delivery_service.send_message(
+            # Schedule background worker for synthesis & outbound posting
+            background_tasks.add_task(
+                _process_slack_app_mention_background,
                 principal=principal,
-                platform=ChannelType.SLACK,
-                destination_id=channel_id,
+                channel_id=channel_id,
                 query=query,
-                idempotency_key=reply_delivery_id,
-                exclude_message_ids=exclude_ids
+                reply_delivery_id=reply_delivery_id,
+                event_delivery_id=event_delivery_id,
+                event_id=event_id,
+                team_id=team_id,
+                event_ts=event_ts
             )
 
-            webhook_delivery_store.mark_completed(reply_delivery_id)
-            webhook_delivery_store.mark_completed(event_delivery_id)
-
+            # Acknowledge HTTP 200 under 3 seconds
             return {
-                "status": "responded",
-                "channel": "slack",
-                "organization_id": org_id,
+                "status": "ok",
                 "event_id": event_id,
                 "team_id": team_id,
                 "channel_id": channel_id,
-                "message_ts": event_ts,
-                "reply_delivery_id": reply_delivery_id,
-                "send_result": send_result,
-                "record_id": record.id if record else None,
-                "chunk_ids": [c.id for c in chunks] if chunks else [],
+                "delivery_id": reply_delivery_id,
+                "message": "Event acknowledged for background processing."
             }
         except PermissionError as exc:
             webhook_delivery_store.mark_failed(event_delivery_id, str(exc))
+            logger.exception(
+                "[Slack App Mention Exception] Permission error",
+                extra={
+                    "event_id": event_id,
+                    "team_id": team_id,
+                    "channel_id": channel_id,
+                    "event_ts": event_ts,
+                    "delivery_id": event_delivery_id,
+                    "processing_phase": "permission_validation",
+                    "exception_type": "PermissionError",
+                }
+            )
             raise HTTPException(status_code=403, detail=str(exc))
         except Exception as exc:
             webhook_delivery_store.mark_failed(event_delivery_id, str(exc))
-            raise HTTPException(status_code=500, detail=f"Slack mention response error: {exc}")
+            logger.exception(
+                "[Slack App Mention Exception] Unexpected error during acknowledgement setup",
+                extra={
+                    "event_id": event_id,
+                    "team_id": team_id,
+                    "channel_id": channel_id,
+                    "event_ts": event_ts,
+                    "delivery_id": event_delivery_id,
+                    "processing_phase": "acknowledgement_setup",
+                    "exception_type": type(exc).__name__,
+                }
+            )
+            raise HTTPException(status_code=500, detail=f"Slack mention response error: {type(exc).__name__}")
 
-    # 5. Inbound message.channels events: deduplicate canonically on workspace + channel + ts
+    # 5. Inbound message.channels events: skip agent-directed messages, ingest ordinary discussion
+    if inbound_agent_query_service.is_agent_message(msg_canonical_id) or inbound_agent_query_service.is_agent_message(event_ts):
+        webhook_delivery_store.mark_completed(event_delivery_id)
+        return {"status": "ignored", "event_id": event_id, "reason": "agent_directed_message"}
+
     can_ingest_msg, msg_claim_status, msg_claim_msg = webhook_delivery_store.claim_delivery(
         delivery_id=msg_canonical_id,
         organization_id=org_id,
@@ -965,4 +1013,16 @@ async def handle_slack_events(request: Request):
     except Exception as exc:
         webhook_delivery_store.mark_failed(msg_canonical_id, str(exc))
         webhook_delivery_store.mark_failed(event_delivery_id, str(exc))
-        raise HTTPException(status_code=500, detail=f"Slack ingestion error: {exc}")
+        logger.exception(
+            "[Slack Message Ingestion Exception] Error during message ingestion",
+            extra={
+                "event_id": event_id,
+                "team_id": team_id,
+                "channel_id": channel_id,
+                "event_ts": event_ts,
+                "delivery_id": msg_canonical_id,
+                "processing_phase": "message_ingestion",
+                "exception_type": type(exc).__name__,
+            }
+        )
+        raise HTTPException(status_code=500, detail=f"Slack ingestion error: {type(exc).__name__}")

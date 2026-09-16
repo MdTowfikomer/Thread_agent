@@ -25,7 +25,7 @@ class ConversationTurnStore:
     4. Data Minimization: Automated cleanup purges turns older than 7 days.
     """
     def __init__(self):
-        pass
+        self._memory_turns: Dict[str, List[Dict[str, Any]]] = {}
 
     @staticmethod
     def format_session_key(platform: str, channel_id: str, user_or_thread_id: str) -> str:
@@ -65,10 +65,20 @@ class ConversationTurnStore:
         if not organization_id:
             raise ValueError("organization_id is strictly required to record conversation turn.")
 
+        turn_entry = {
+            "session_key": session_key,
+            "platform": str(platform).lower().replace("channeltype.", ""),
+            "organization_id": organization_id,
+            "initiating_user_id": initiating_user_id,
+            "role": role,
+            "content": content,
+            "created_at": datetime.now(timezone.utc)
+        }
+        self._memory_turns.setdefault(session_key, []).append(turn_entry)
+
         conn = self._get_db_conn()
         if not conn:
-            logger.error("ConversationTurnStore cannot persist turn: Database unavailable.")
-            return False
+            return True
 
         clean_plat = str(platform).lower().replace("channeltype.", "")
         try:
@@ -117,7 +127,8 @@ class ConversationTurnStore:
 
         conn = self._get_db_conn()
         if not conn:
-            logger.warning("ConversationTurnStore lookup failed closed: Database unavailable.")
+            turns = self._memory_turns.get(session_key, [])
+            return [{"role": t["role"], "content": t["content"]} for t in turns[-limit:]]
             return []
 
         try:

@@ -21,7 +21,17 @@ type ChatMessage = {
   confidence_score?: number;
   receipt_id?: string;
   sufficient_evidence?: boolean;
+  isPending?: boolean;
 };
+
+function getQueryProgressMessage(query: string): string {
+  const normalized = query.toLowerCase();
+  if (/(github|commit|repo|repository|pull request|issue)/.test(normalized)) return 'Checking the connected repository activity.';
+  if (/(event|workshop|hackathon|meetup|rsvp)/.test(normalized)) return 'Checking published events and registration details.';
+  if (/(what can thread|what do you do|help me with)/.test(normalized)) return 'Checking the tools and community context available to you.';
+  if (/(summary|summarize|recap)/.test(normalized)) return 'Reviewing the available conversation context.';
+  return 'Checking the available community context.';
+}
 
 export const ChatArea: React.FC<ChatAreaProps> = ({
   workspaceName,
@@ -35,6 +45,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   const [isMobileEvidenceOpen, setIsMobileEvidenceOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const pendingMessageIdRef = useRef<string | null>(null);
 
   const adapter: ChatModelAdapter = {
     async run({ messages }) {
@@ -59,21 +70,30 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           receipt_id: response.retrieval_receipt_id || response.receipt?.receipt_id,
           sufficient_evidence: response.sufficient_evidence ?? Boolean(response.citations?.length),
         };
-        setMessagesList((current) => [...current, assistantMessage]);
+        const pendingMessageId = pendingMessageIdRef.current;
+        setMessagesList((current) => pendingMessageId
+          ? current.map((message) => message.id === pendingMessageId ? assistantMessage : message)
+          : [...current, assistantMessage]);
+        pendingMessageIdRef.current = null;
         setActiveMessageId(assistantId);
         return { content: [{ type: 'text', text: response.answer }] };
       } catch (error: unknown) {
         if (error instanceof ApiError && error.status === 401) onUnauthorized?.();
         const assistantId = `error-${Date.now()}`;
         const message = error instanceof Error ? error.message : 'Thread could not complete that request.';
-        setMessagesList((current) => [...current, {
+        const pendingMessageId = pendingMessageIdRef.current;
+        const errorMessage: ChatMessage = {
           id: assistantId,
           role: 'assistant',
           content: message,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           citations: [],
           sufficient_evidence: false,
-        }]);
+        };
+        setMessagesList((current) => pendingMessageId
+          ? current.map((messageItem) => messageItem.id === pendingMessageId ? errorMessage : messageItem)
+          : [...current, errorMessage]);
+        pendingMessageIdRef.current = null;
         setActiveMessageId(assistantId);
         return { content: [{ type: 'text', text: message }] };
       } finally {
@@ -97,11 +117,19 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const sendMessage = (text: string) => {
     const query = text.trim();
     if (!query || loading) return;
+    const pendingMessageId = `pending-${Date.now()}`;
+    pendingMessageIdRef.current = pendingMessageId;
     setMessagesList((current) => [...current, {
       id: `user-${Date.now()}`,
       role: 'user',
       content: query,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    }, {
+      id: pendingMessageId,
+      role: 'assistant',
+      content: getQueryProgressMessage(query),
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      isPending: true,
     }]);
     setLoading(true);
     runtime.thread.append({ role: 'user', content: [{ type: 'text', text: query }] });
@@ -145,9 +173,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                         <span>{message.role === 'user' ? 'You' : 'ThreadAgent'}</span>
                         <span>{message.timestamp}</span>
                       </div>
-                      <div className={`mt-3 whitespace-pre-line text-base leading-7 ${message.role === 'user' ? 'border-l border-neutral-700 pl-4 text-neutral-300' : 'text-neutral-100'}`}>
+                      <div className={`mt-3 whitespace-pre-line text-base leading-7 ${message.role === 'user' ? 'border-l border-neutral-700 pl-4 text-neutral-300' : message.isPending ? 'text-neutral-400' : 'text-neutral-100'}`}>
                         {message.content}
                       </div>
+                      {message.isPending && <p className="mt-3 text-xs text-neutral-600">This may take a moment for longer answers.</p>}
                       {message.role === 'assistant' && message.citations && message.citations.length > 0 && (
                         <button
                           onClick={() => {

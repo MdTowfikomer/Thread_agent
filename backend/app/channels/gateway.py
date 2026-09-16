@@ -30,19 +30,44 @@ def extract_error_details(exc: Exception) -> Dict[str, Any]:
     Safely extract structured error details for logging and retry decisions.
     Guarantees:
       - HTTP 429 and Cloudflare 1015 are detected distinctly.
+      - Retry-After is parsed safely as float seconds if available.
       - Safe structured fields only.
       - NEVER exposes or logs token strings or raw HTML error bodies.
     """
     status = getattr(exc, "status", None)
     code = getattr(exc, "code", None)
 
-    # Extract CF-RAY if present in response headers
+    # Extract CF-RAY and Retry-After if present in response headers
     cf_ray = None
+    retry_after = None
     response = getattr(exc, "response", None)
     if response is not None and hasattr(response, "headers") and response.headers:
         cf_ray = response.headers.get("CF-RAY") or response.headers.get("cf-ray")
+        ra = response.headers.get("Retry-After") or response.headers.get("retry-after")
+        if ra is not None:
+            try:
+                retry_after = float(ra)
+            except (ValueError, TypeError):
+                pass
+
     if not cf_ray:
         cf_ray = getattr(exc, "cf_ray", None)
+
+    if retry_after is None:
+        ra = getattr(exc, "retry_after", None)
+        if ra is not None:
+            try:
+                retry_after = float(ra)
+            except (ValueError, TypeError):
+                pass
+
+    if retry_after is None and hasattr(exc, "data") and isinstance(exc.data, dict):
+        ra = exc.data.get("retry_after")
+        if ra is not None:
+            try:
+                retry_after = float(ra)
+            except (ValueError, TypeError):
+                pass
 
     is_429 = (status == 429)
 
@@ -62,6 +87,7 @@ def extract_error_details(exc: Exception) -> Dict[str, Any]:
         "cf_ray": cf_ray,
         "is_429": is_429,
         "is_cf_1015": is_cf_1015,
+        "retry_after": retry_after,
     }
 
 
@@ -84,10 +110,11 @@ class DiscordThreadClient(discord.Client):
         await self.bot_service.on_client_ready()
 
     async def on_message(self, message: discord.Message):
-        # 1. Dispatch live-message ingestion as bounded background work (non-blocking)
-        self.bot_service.dispatch_background_ingestion(message)
-        # 2. Immediately await mention reply flow without blocking on ingestion
+        # 1. Filter and queue live-message ingestion into bounded queue (safely drop if full or unbound)
+        self.bot_service.queue_message_for_ingestion(message)
+        # 2. Immediately await mention reply flow (remains responsive even if queue is saturated)
         await self.bot_service.handle_discord_mention_reply(message, self)
+
 
 class DiscordGatewayBot:
     """
@@ -97,10 +124,10 @@ class DiscordGatewayBot:
     SECURITY & RESILIENCE GUARANTEES:
     1. Authenticates against Discord Gateway using official discord.py client with full session resilience.
     2. Gateway supervisor wraps client startup with exponential backoff & full jitter (initial 60s, cap 15m).
-    3. Detects HTTP 429 and Cloudflare 1015 distinctly with safe structured logging (zero token/HTML leakage).
+    3. Detects HTTP 429 (respecting Retry-After) and Cloudflare 1015 distinctly with safe structured logging.
     4. Resolves organization_id authoritatively from server-owned GuildInstallationStore.
-    5. Ignores bot messages to prevent echo loops.
-    6. Decouples ingestion to bounded asyncio.to_thread workers without delaying mention replies.
+    5. Filters bot messages, unknown guilds, and unbound channels before queueing.
+    6. Decouples ingestion to bounded asyncio.Queue with fixed workers; mention replies remain responsive.
     7. Single active client guaranteed; resets retry counter only after on_ready.
     """
     def __init__(
@@ -111,7 +138,8 @@ class DiscordGatewayBot:
         mem_repo: Optional[MemoryRepository] = None,
         initial_backoff: float = 60.0,
         max_backoff: float = 900.0,
-        max_concurrent_ingestions: int = 10,
+        max_queue_size: int = 100,
+        num_workers: int = 2,
         jitter_fn: Optional[Callable[[float, float], float]] = None,
         sleep_fn: Optional[Callable[[float], Coroutine]] = None,
     ):
@@ -130,18 +158,22 @@ class DiscordGatewayBot:
         self.next_retry_at: Optional[datetime] = None
         self.initial_backoff: float = initial_backoff
         self.max_backoff: float = max_backoff
-        self.max_concurrent_ingestions: int = max_concurrent_ingestions
+        self.max_queue_size: int = max_queue_size
+        self.num_workers: int = num_workers
         self._jitter_fn: Callable[[float, float], float] = jitter_fn or random.uniform
         self._sleep_fn: Callable[[float], Coroutine] = sleep_fn or asyncio.sleep
-        self._ingestion_semaphore: Optional[asyncio.Semaphore] = None
-        self._background_tasks: set = set()
+
+        # Bounded ingestion queue & worker tasks
+        self._ingestion_queue: Optional[asyncio.Queue] = None
+        self._ingestion_workers: List[asyncio.Task] = []
+        self._dropped_messages_count: int = 0
 
     def handle_discord_message(
         self,
         message: discord.Message
     ) -> Optional[Tuple[SourceRecord, List[MemoryChunk], IngestionReceipt]]:
         """Handle incoming discord.py Message object."""
-        if message.author.bot:
+        if getattr(message.author, "bot", False):
             return None
 
         if not message.guild:
@@ -150,6 +182,13 @@ class DiscordGatewayBot:
         guild_id = str(message.guild.id)
         org_id = self.installation_store.get_organization_for_guild(guild_id)
         if not org_id:
+            return None
+
+        # Finding 3: Must require an existing active server-owned ChannelPolicy for that exact guild and channel.
+        # For an unbound channel, do not ingest.
+        from app.channels.policy import channel_policy_store
+        policy = channel_policy_store.get_policy(org_id, ChannelType.DISCORD, str(message.channel.id), guild_id)
+        if not policy or not policy.is_active:
             return None
 
         channel_msg = ChannelMessage(
@@ -177,12 +216,23 @@ class DiscordGatewayBot:
 
     async def handle_discord_mention_reply(self, message: discord.Message, client: discord.Client):
         """Handle mention and direct interaction replies for Discord messages."""
-        if message.author.bot or not message.guild:
+        if getattr(message.author, "bot", False) or not message.guild:
             return
 
         guild_id = str(message.guild.id)
         org_id = self.installation_store.get_organization_for_guild(guild_id)
         if not org_id:
+            return
+
+        # Finding 3: A Discord reply must require an existing active server-owned ChannelPolicy
+        # for that exact guild and channel. For an unbound channel, do not reply.
+        from app.channels.policy import channel_policy_store
+        policy = channel_policy_store.get_policy(org_id, ChannelType.DISCORD, str(message.channel.id), guild_id)
+        if not policy or not policy.is_active:
+            logger.info(
+                f"[Discord Gateway] Drop mention: channel {message.channel.id} in guild {guild_id} "
+                f"has no active server-owned ChannelPolicy."
+            )
             return
 
         bot_user = client.user
@@ -215,7 +265,6 @@ class DiscordGatewayBot:
                 from app.core.membership import membership_store
                 from app.core.auth import AuthenticatedPrincipal
                 from app.channels.outbound import channel_message_delivery_service
-                from app.channels.policy import channel_policy_store
                 from app.core.canonical import PermissionLevel
 
                 author_id = str(message.author.id)
@@ -239,17 +288,7 @@ class DiscordGatewayBot:
                     access_context=access_context,
                 )
 
-                policy = channel_policy_store.get_policy(org_id, ChannelType.DISCORD, str(message.channel.id), guild_id)
-                if not policy or not policy.is_active:
-                    channel_policy_store.register_policy(
-                        organization_id=org_id,
-                        channel_type=ChannelType.DISCORD,
-                        channel_id=str(message.channel.id),
-                        permission_scope=PermissionLevel.PUBLIC_COMMUNITY,
-                        guild_id=guild_id,
-                        channel_name=getattr(message.channel, "name", None),
-                    )
-
+                # Channel policy was already validated active above
                 reply_idempotency_key = f"discord_reply_{guild_id}_{message.channel.id}_{message.id}"
 
                 send_result = await asyncio.to_thread(
@@ -345,32 +384,70 @@ class DiscordGatewayBot:
         return record, chunks, receipt
 
     @property
-    def ingestion_semaphore(self) -> asyncio.Semaphore:
-        if self._ingestion_semaphore is None:
-            self._ingestion_semaphore = asyncio.Semaphore(self.max_concurrent_ingestions)
-        return self._ingestion_semaphore
+    def ingestion_queue(self) -> asyncio.Queue:
+        if self._ingestion_queue is None:
+            self._ingestion_queue = asyncio.Queue(maxsize=self.max_queue_size)
+        return self._ingestion_queue
 
-    async def _bounded_ingest(self, message: discord.Message):
-        async with self.ingestion_semaphore:
-            await asyncio.to_thread(self.handle_discord_message, message)
+    def _ensure_workers_started(self):
+        """Ensure fixed number of background worker tasks are active."""
+        if not self._ingestion_workers or all(w.done() for w in self._ingestion_workers):
+            self._ingestion_workers = []
+            try:
+                loop = asyncio.get_running_loop()
+                for i in range(self.num_workers):
+                    w = loop.create_task(self._ingestion_worker_loop(i))
+                    self._ingestion_workers.append(w)
+            except RuntimeError:
+                pass
 
-    def dispatch_background_ingestion(self, message: discord.Message) -> asyncio.Task:
-        task = asyncio.create_task(self._bounded_ingest(message))
-        self._background_tasks.add(task)
-        task.add_done_callback(self._on_ingestion_task_done)
-        return task
+    async def _ingestion_worker_loop(self, worker_id: int):
+        """Worker task consuming live messages from bounded ingestion queue."""
+        while self._running:
+            try:
+                message = await self.ingestion_queue.get()
+            except asyncio.CancelledError:
+                break
+            try:
+                await asyncio.to_thread(self.handle_discord_message, message)
+            except Exception as exc:
+                logger.error(f"[Discord Gateway Worker {worker_id}] Ingestion error: {type(exc).__name__}: {exc}")
+            finally:
+                self.ingestion_queue.task_done()
 
-    def _on_ingestion_task_done(self, task: asyncio.Task):
-        self._background_tasks.discard(task)
+    def queue_message_for_ingestion(self, message: discord.Message) -> bool:
+        """
+        Filter and queue live message for background ingestion into bounded queue.
+        Filters bot messages, unknown guilds, and unbound channels before queueing.
+        Safely drops excess messages when queue is full with structured warning logging.
+        """
+        if getattr(message.author, "bot", False) or not message.guild:
+            return False
+
+        guild_id = str(message.guild.id)
+        org_id = self.installation_store.get_organization_for_guild(guild_id)
+        if not org_id:
+            return False
+
+        # Channel policy pre-check: unbound channels must not be ingested
+        from app.channels.policy import channel_policy_store
+        policy = channel_policy_store.get_policy(org_id, ChannelType.DISCORD, str(message.channel.id), guild_id)
+        if not policy or not policy.is_active:
+            return False
+
+        self._ensure_workers_started()
+
         try:
-            if not task.cancelled():
-                exc = task.exception()
-                if exc:
-                    logger.error(
-                        f"[Discord Gateway] Live message background ingestion failed: {type(exc).__name__}"
-                    )
-        except Exception as e:
-            logger.error(f"[Discord Gateway] Error checking ingestion task status: {type(e).__name__}")
+            self.ingestion_queue.put_nowait(message)
+            return True
+        except asyncio.QueueFull:
+            self._dropped_messages_count += 1
+            logger.warning(
+                f"[Discord Gateway] Ingestion queue full ({self.ingestion_queue.maxsize}). Dropping message: "
+                f"message_id={message.id} guild_id={guild_id} channel_id={message.channel.id} "
+                f"dropped_total={self._dropped_messages_count}"
+            )
+            return False
 
     async def on_client_ready(self):
         """Reset retry counter and update readiness state when discord.py client reports on_ready."""
@@ -396,16 +473,42 @@ class DiscordGatewayBot:
             "next_retry_at": self.next_retry_at.isoformat() if self.next_retry_at else None,
         }
 
-    def calculate_backoff(self, attempt: int) -> float:
+    def calculate_backoff(self, attempt: int, error_details: Optional[Dict[str, Any]] = None) -> float:
         """
-        Calculate exponential backoff with full jitter.
-        Formula: delay = jitter(0, min(max_backoff, initial_backoff * 2^(attempt - 1)))
+        Calculate exponential backoff with full jitter and protocol-specific rate limits.
+        Rules:
+          - Default exponential ceiling: min(max_backoff, initial_backoff * 2^(attempt - 1))
+          - Jitter delay: jitter(0, ceiling)
+          - For HTTP 429: sleep for at least Retry-After, never a shorter jitter delay.
+          - For Cloudflare 1015 without Retry-After: conservative minimum delay of 5 minutes (300s)
+            plus jitter, capped at 15 minutes (900s).
         """
         if attempt < 1:
             attempt = 1
         ceiling = min(self.max_backoff, self.initial_backoff * (2.0 ** (attempt - 1)))
         delay = self._jitter_fn(0.0, ceiling)
-        return max(0.01, delay)
+        delay = max(0.01, delay)
+
+        if error_details:
+            is_429 = error_details.get("is_429", False)
+            is_cf_1015 = error_details.get("is_cf_1015", False)
+            retry_after = error_details.get("retry_after")
+
+            # 1. HTTP 429: sleep for at least Retry-After, never a shorter jitter delay
+            if is_429 and retry_after is not None and retry_after > 0:
+                delay = max(float(retry_after), delay)
+
+            # 2. Cloudflare 1015 without Retry-After: conservative minimum of 5 minutes (300s) plus jitter, capped at 15m (900s)
+            elif is_cf_1015 and (retry_after is None or retry_after <= 0):
+                remaining = max(0.0, self.max_backoff - 300.0)
+                cf_jitter = self._jitter_fn(0.0, min(remaining, ceiling))
+                delay = min(self.max_backoff, 300.0 + cf_jitter)
+
+            # If CF 1015 has Retry-After explicitly provided
+            elif is_cf_1015 and retry_after is not None and retry_after > 0:
+                delay = max(float(retry_after), delay)
+
+        return delay
 
     async def _cleanup_client(self):
         """Clean up existing discord.py client instance to prevent concurrent clients."""
@@ -476,7 +579,7 @@ class DiscordGatewayBot:
 
                 self.retry_count += 1
                 err_details = extract_error_details(exc)
-                delay = self.calculate_backoff(self.retry_count)
+                delay = self.calculate_backoff(self.retry_count, err_details)
 
                 self.state = "backing_off"
                 self.next_retry_at = datetime.now(timezone.utc) + timedelta(seconds=delay)
@@ -489,6 +592,7 @@ class DiscordGatewayBot:
                     f"delay_seconds={delay:.2f} "
                     f"exception_class={err_details['exception_class']} "
                     f"http_status={err_details['http_status']} "
+                    f"retry_after={err_details['retry_after']} "
                     f"cf_ray={err_details['cf_ray']} "
                     f"is_429={err_details['is_429']} "
                     f"is_cf_1015={err_details['is_cf_1015']}"
@@ -521,7 +625,7 @@ class DiscordGatewayBot:
             pass
 
     async def stop(self):
-        """Gracefully stop discord.py client and supervisor."""
+        """Gracefully stop discord.py client, supervisor, and ingestion workers."""
         self._running = False
         self.state = "stopped"
         await self._cleanup_client()
@@ -531,10 +635,14 @@ class DiscordGatewayBot:
                 await self._task
             except asyncio.CancelledError:
                 pass
-        for t in list(self._background_tasks):
-            if not t.done():
-                t.cancel()
-        self._background_tasks.clear()
+
+        # Stop and drain worker tasks
+        for w in self._ingestion_workers:
+            if not w.done():
+                w.cancel()
+        if self._ingestion_workers:
+            await asyncio.gather(*self._ingestion_workers, return_exceptions=True)
+        self._ingestion_workers.clear()
 
 discord_gateway_bot = DiscordGatewayBot()
 

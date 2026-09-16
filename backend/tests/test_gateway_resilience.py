@@ -18,7 +18,7 @@ os.environ["THREAD_ALLOW_GUEST_MODE"] = "false"
 os.environ["THREAD_JWT_SECRET"] = "test-secret-cryptographically-secure-32-chars-long-abc12345"
 
 from app.core.config import settings
-from app.core.canonical import PermissionLevel
+from app.core.canonical import PermissionLevel, ChannelType
 from app.core.auth import create_access_token
 from app.core.membership import membership_store
 from app.channels.gateway import (
@@ -46,6 +46,16 @@ def clean_gateway_env():
     guild_installation_store.register_installation("1549162455874412667", "gdg_mcet", "GDG MCET")
     membership_store.reset()
 
+    # Register default server-owned active ChannelPolicy for test guild/channel
+    channel_policy_store.register_policy(
+        organization_id="gdg_mcet",
+        channel_type=ChannelType.DISCORD,
+        channel_id="12345",
+        permission_scope=PermissionLevel.PUBLIC_COMMUNITY,
+        guild_id="1549162455874412667",
+        channel_name="general",
+    )
+
     discord_gateway_bot.state = "stopped"
     discord_gateway_bot.retry_count = 0
     discord_gateway_bot.last_ready_at = None
@@ -53,7 +63,9 @@ def clean_gateway_env():
     discord_gateway_bot._running = False
     discord_gateway_bot._client = None
     discord_gateway_bot._task = None
-    discord_gateway_bot._background_tasks.clear()
+    discord_gateway_bot._ingestion_workers.clear()
+    discord_gateway_bot._ingestion_queue = None
+    discord_gateway_bot._dropped_messages_count = 0
 
 
 # =====================================================================
@@ -193,7 +205,7 @@ def test_supervisor_retries_429_and_1015_with_exponential_backoff():
 
         assert len(delays_slept) == 2
         assert delays_slept[0] == 60.0   # Attempt 1 backoff
-        assert delays_slept[1] == 120.0  # Attempt 2 backoff
+        assert delays_slept[1] == 420.0  # Attempt 2 backoff: 300s CF 1015 minimum + 120s max ceiling jitter
         assert attempt_counter == 3
         assert bot.retry_count == 2
 
@@ -305,6 +317,7 @@ def test_slow_ingestion_does_not_delay_mention_reply():
             reply_dispatched = True
 
         bot.handle_discord_mention_reply = fast_reply
+        bot._running = True
 
         client_instance = DiscordThreadClient(bot_service=bot)
 
@@ -324,10 +337,10 @@ def test_slow_ingestion_does_not_delay_mention_reply():
         assert elapsed < 0.15
         assert reply_dispatched is True
 
-        # Await background ingestion tasks to settle
-        if bot._background_tasks:
-            await asyncio.gather(*bot._background_tasks)
+        # Await background ingestion to settle and stop bot
+        await asyncio.sleep(0.5)
         assert ingestion_completed is True
+        await bot.stop()
 
     asyncio.run(run())
 
@@ -514,3 +527,153 @@ def test_readiness_signal_operator_success_and_zero_leakage():
     assert "exception" not in data
     assert "html" not in data
     assert set(data.keys()) == {"state", "last_ready_at", "next_retry_at"}
+
+
+# =====================================================================
+# 10. REVIEW FINDINGS: RETRY-AFTER, CF 1015, UNBOUND CHANNELS, QUEUE SATURATION
+# =====================================================================
+
+def test_429_retry_after_never_sleeps_less_than_retry_after():
+    """Verify HTTP 429 backoff sleeps for at least Retry-After and never a shorter delay."""
+    bot = DiscordGatewayBot(initial_backoff=60.0, max_backoff=900.0)
+
+    # 1. 100 trials with default jitter: delay MUST always be >= 60.0s
+    for attempt in range(1, 6):
+        for _ in range(20):
+            delay = bot.calculate_backoff(attempt, {"is_429": True, "retry_after": 60.0})
+            assert delay >= 60.0, f"Delay {delay} was less than 60-second Retry-After at attempt {attempt}"
+
+    # 2. Zero-jitter test: delay must equal exactly Retry-After
+    bot_zero_jitter = DiscordGatewayBot(
+        initial_backoff=60.0,
+        max_backoff=900.0,
+        jitter_fn=lambda low, high: 0.0
+    )
+    delay_zero = bot_zero_jitter.calculate_backoff(1, {"is_429": True, "retry_after": 60.0})
+    assert delay_zero == 60.0
+
+    # 3. 120s Retry-After test
+    delay_120 = bot_zero_jitter.calculate_backoff(1, {"is_429": True, "retry_after": 120.0})
+    assert delay_120 == 120.0
+
+
+def test_cloudflare_1015_minimum_delay_5_minutes():
+    """Verify Cloudflare 1015 without Retry-After enforces a conservative 5-minute (300s) minimum, capped at 15m (900s)."""
+    bot = DiscordGatewayBot(initial_backoff=60.0, max_backoff=900.0)
+
+    # 1. 100 trials: delay MUST always be in [300.0, 900.0]
+    for attempt in range(1, 6):
+        for _ in range(20):
+            delay = bot.calculate_backoff(attempt, {"is_cf_1015": True, "retry_after": None})
+            assert 300.0 <= delay <= 900.0, f"Delay {delay} not within [300s, 900s] at attempt {attempt}"
+
+    # 2. Zero-jitter test: exactly 300.0s minimum
+    bot_zero = DiscordGatewayBot(
+        initial_backoff=60.0,
+        max_backoff=900.0,
+        jitter_fn=lambda low, high: 0.0
+    )
+    delay_min = bot_zero.calculate_backoff(1, {"is_cf_1015": True, "retry_after": None})
+    assert delay_min == 300.0
+
+    # 3. Max-jitter test: capped at 900.0s (15 minutes)
+    bot_max = DiscordGatewayBot(
+        initial_backoff=60.0,
+        max_backoff=900.0,
+        jitter_fn=lambda low, high: high
+    )
+    delay_max = bot_max.calculate_backoff(5, {"is_cf_1015": True, "retry_after": None})
+    assert delay_max == 900.0
+
+
+def test_unbound_channel_no_reply_and_no_ingest():
+    """Verify that an unbound channel (no server-owned active ChannelPolicy) is neither ingested nor replied to."""
+    async def run():
+        bot = DiscordGatewayBot()
+        client_mock = MagicMock()
+        bot_user = MagicMock()
+        bot_user.id = 12345
+        client_mock.user = bot_user
+
+        mock_msg = MagicMock(spec=discord.Message)
+        mock_msg.author.bot = False
+        mock_msg.guild.id = 1549162455874412667
+        mock_msg.guild.name = "GDG MCET"
+        # Channel 99999 has NO policy registered in channel_policy_store
+        mock_msg.channel.id = 99999
+        mock_msg.id = 88888
+        mock_msg.content = "<@12345> Hello unbound channel"
+        mock_msg.mentions = [bot_user]
+        mock_msg.reply = AsyncMock()
+
+        # 1. Verification of queue_message_for_ingestion: must return False and drop
+        queued = bot.queue_message_for_ingestion(mock_msg)
+        assert queued is False
+
+        # 2. Verification of handle_discord_message: must return None
+        ingested = bot.handle_discord_message(mock_msg)
+        assert ingested is None
+
+        # 3. Verification of handle_discord_mention_reply: must not reply
+        await bot.handle_discord_mention_reply(mock_msg, client_mock)
+        assert mock_msg.reply.call_count == 0
+
+    asyncio.run(run())
+
+
+def test_queue_saturation_drops_excess_and_keeps_mention_responsive():
+    """Verify queue saturation safely drops excess non-mention messages while mention replies remain responsive."""
+    async def run():
+        # Initialize bot with small queue capacity of 2 and 0 background workers (to prevent draining)
+        bot = DiscordGatewayBot(max_queue_size=2, num_workers=0)
+
+        # Mock client
+        client_mock = MagicMock()
+        bot_user = MagicMock()
+        bot_user.id = 12345
+        client_mock.user = bot_user
+
+        # Create 3 messages for channel 12345 (which has active policy registered in clean_gateway_env)
+        def create_msg(msg_id: int, content: str):
+            m = MagicMock(spec=discord.Message)
+            m.author.bot = False
+            m.guild.id = 1549162455874412667
+            m.guild.name = "GDG MCET"
+            m.channel.id = 12345
+            m.id = msg_id
+            m.content = content
+            m.mentions = [bot_user] if "<@12345>" in content else []
+            m.reply = AsyncMock()
+            return m
+
+        msg1 = create_msg(101, "First background message")
+        msg2 = create_msg(102, "Second background message")
+        msg3 = create_msg(103, "<@12345>")  # Empty mention asking for prompt
+
+        # Enqueue 2 messages to saturate the queue (size 2)
+        assert bot.queue_message_for_ingestion(msg1) is True
+        assert bot.queue_message_for_ingestion(msg2) is True
+        assert bot.ingestion_queue.full() is True
+
+        # Now dispatch msg3 via DiscordThreadClient
+        client_instance = DiscordThreadClient(bot_service=bot)
+        client_instance._connection.user = bot_user
+
+        t0 = time.monotonic()
+        await client_instance.on_message(msg3)
+        elapsed = time.monotonic() - t0
+
+        # Ingestion queue was full: msg3 ingestion was safely dropped
+        assert bot._dropped_messages_count >= 1
+
+        # Mention reply MUST have completed immediately (< 0.15s) and replied
+        assert elapsed < 0.15
+        msg3.reply.assert_awaited_once_with(
+            "Hello! Ask me any question about GDG MCET records and I'll find grounded evidence.",
+            mention_author=False
+        )
+
+        await bot.stop()
+
+    asyncio.run(run())
+

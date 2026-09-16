@@ -68,3 +68,7 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Discloud build artifacts
+deploy/discloud/app/
+deploy/discloud/dist/

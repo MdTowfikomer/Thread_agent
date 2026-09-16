@@ -16,7 +16,7 @@ services:
       - key: THREAD_DEPLOYMENT_MODE
         value: render_free_demo
       - key: THREAD_START_GATEWAY_BOT
-        value: "true"
+        value: "false"
       - key: WEB_CONCURRENCY
         value: "1"
       - key: DISCORD_ENABLE_MESSAGE_CONTENT_INTENT

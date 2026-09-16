@@ -6,11 +6,11 @@ import subprocess
 from pathlib import Path
 from scripts.package_quaxly import package_quaxly
 
-def test_quaxly_package_smoke_test():
+def test_quaxly_package_smoke_test(tmp_path):
     """
     Smoke test for the Quaxly deployment package:
     1. Builds the deployment archive.
-    2. Unpacks it to a clean temporary directory.
+    2. Unpacks it to pytest tmp_path.
     3. Verifies required runtime files are present and forbidden files are excluded.
     4. Executes --preflight from within the extracted artifact to confirm standalone execution.
     """
@@ -18,10 +18,9 @@ def test_quaxly_package_smoke_test():
     assert zip_path.exists(), "Quaxly deployment package zip must exist"
     assert zip_path.stat().st_size > 0, "Package zip must not be empty"
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_path = Path(temp_dir)
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(temp_path)
+    temp_path = Path(tmp_path)
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        zf.extractall(temp_path)
 
         # 1. Required files verification
         assert (temp_path / "Dockerfile").exists(), "Dockerfile missing from package"

@@ -123,34 +123,67 @@ class RetrievalService:
                 confidence_score=0.0
             )
 
-        # 3. Deterministic Scoring on Authorized Candidates
-        query_vec = np.array(self.store._get_embedding(query), dtype=float)
-        norm_q = np.linalg.norm(query_vec)
-        if norm_q > 0:
-            query_vec = query_vec / norm_q
+        # 3. Embedding retrieval mode and scoring
+        raw_query_vec = self.store._get_embedding(query)
+        active_model = getattr(self.store, "_active_model_name", "sparse_only")
+
+        if os.environ.get("THREAD_FORCE_DETERMINISTIC_EMBEDDINGS") == "1" or self.store.force_deterministic:
+            retrieval_mode = "deterministic_offline_test"
+            query_model = active_model
+        elif raw_query_vec is None or active_model == "sparse_only":
+            retrieval_mode = "sparse_only"
+            query_model = "sparse_only"
+        else:
+            retrieval_mode = "dense_and_sparse"
+            query_model = active_model
 
         scored_candidates = []
-        for chunk in allowed_chunks:
-            chunk_vec = np.array(self.store._embeddings.get(chunk.id, []), dtype=float)
-            if len(chunk_vec) == 0:
-                continue
 
-            norm_c = np.linalg.norm(chunk_vec)
-            if norm_c > 0:
-                chunk_vec = chunk_vec / norm_c
-
-            cos_sim = float(np.dot(query_vec, chunk_vec))
-
-            # Lexical keyword overlap bonus with clean punctuation-agnostic tokenization
+        if raw_query_vec is None or retrieval_mode == "sparse_only":
+            # Sparse-only retrieval path (FTS / BM25 lexical token match)
             q_words = set(re.findall(r"\b\w+\b", query.lower()))
-            c_words = set(re.findall(r"\b\w+\b", chunk.content.lower()))
-            tag_words = set(re.findall(r"\b\w+\b", " ".join(chunk.tags).lower()))
-            title_words = set(re.findall(r"\b\w+\b", (chunk.title or "").lower()))
-            overlap = len(q_words.intersection(c_words.union(tag_words).union(title_words)))
-            boost = min(0.35, overlap * 0.08)
+            stopwords = {"what", "is", "our", "the", "in", "and", "or", "for", "to", "a", "an", "on", "of", "with", "we", "are"}
+            sig_q_words = q_words - stopwords
+            for chunk in allowed_chunks:
+                c_words = set(re.findall(r"\b\w+\b", chunk.content.lower()))
+                tag_words = set(re.findall(r"\b\w+\b", " ".join(chunk.tags).lower()))
+                title_words = set(re.findall(r"\b\w+\b", (chunk.title or "").lower()))
+                all_c_words = c_words.union(tag_words).union(title_words)
+                overlap = len(sig_q_words.intersection(all_c_words))
+                if overlap > 0:
+                    score = min(0.95, round(0.40 + overlap * 0.15, 3))
+                    scored_candidates.append((score, chunk))
+        else:
+            query_vec = np.array(raw_query_vec, dtype=float)
+            norm_q = np.linalg.norm(query_vec)
+            if norm_q > 0:
+                query_vec = query_vec / norm_q
 
-            final_score = cos_sim + boost
-            scored_candidates.append((final_score, chunk))
+            for chunk in allowed_chunks:
+                # Homogeneous Vector Space Enforcement: exclude chunks embedded with a different model
+                chunk_model = chunk.provenance.get("embedding_model")
+                chunk_vec_raw = self.store._embeddings.get(chunk.id)
+                
+                # Check for vector model compatibility
+                if chunk_vec_raw and len(chunk_vec_raw) == len(raw_query_vec) and (not chunk_model or chunk_model == active_model or active_model == "deterministic-v1"):
+                    chunk_vec = np.array(chunk_vec_raw, dtype=float)
+                    norm_c = np.linalg.norm(chunk_vec)
+                    if norm_c > 0:
+                        chunk_vec = chunk_vec / norm_c
+                    cos_sim = float(np.dot(query_vec, chunk_vec))
+                else:
+                    cos_sim = 0.0
+
+                q_words = set(re.findall(r"\b\w+\b", query.lower()))
+                c_words = set(re.findall(r"\b\w+\b", chunk.content.lower()))
+                tag_words = set(re.findall(r"\b\w+\b", " ".join(chunk.tags).lower()))
+                title_words = set(re.findall(r"\b\w+\b", (chunk.title or "").lower()))
+                overlap = len(q_words.intersection(c_words.union(tag_words).union(title_words)))
+                boost = min(0.35, overlap * 0.08)
+
+                final_score = cos_sim + boost
+                if final_score > 0:
+                    scored_candidates.append((final_score, chunk))
 
         # Sort descending by score
         scored_candidates.sort(key=lambda x: x[0], reverse=True)
@@ -211,7 +244,9 @@ class RetrievalService:
             selected_item_ids=selected_ids,
             scores=scores_map,
             source_types=source_types,
-            retrieval_strategy="deterministic_hybrid_cosine_lexical_pre_acl"
+            retrieval_strategy=f"{retrieval_mode}_pre_acl",
+            query_embedding_model=query_model,
+            retrieval_mode=retrieval_mode
         )
 
         return EvidencePack(

@@ -29,9 +29,10 @@ def get_production_embedder(
     if settings.has_gemini:
         try:
             from langchain_google_genai import GoogleGenerativeAIEmbeddings
+            model_name = settings.DEFAULT_EMBEDDING_MODEL
             embedder = GoogleGenerativeAIEmbeddings(
-                model="models/text-embedding-004",
-                google_api_key=settings.GEMINI_API_KEY
+                model=model_name,
+                google_api_key=settings.gemini_api_key
             )
             def _embed_gemini(text: str) -> Tuple[List[float], str, int]:
                 try:
@@ -40,7 +41,7 @@ def get_production_embedder(
                     raise RuntimeError(f"Gemini embedding API call failed: {e}") from e
                 if len(vec) != settings.EMBEDDING_DIMENSION:
                     raise ValueError(f"Gemini returned dimension {len(vec)}, expected {settings.EMBEDDING_DIMENSION}")
-                return vec, "models/text-embedding-004", settings.EMBEDDING_DIMENSION
+                return vec, model_name, settings.EMBEDDING_DIMENSION
             return _embed_gemini
         except ImportError:
             pass

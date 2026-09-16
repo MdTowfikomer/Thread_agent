@@ -21,26 +21,30 @@ class MemoryStore:
         self._external_chunk_ids: Dict[str, str] = {}
         self.force_deterministic: bool = False
 
-    def _get_embedding(self, text: str) -> List[float]:
+    def _get_embedding(self, text: str) -> Optional[List[float]]:
         text = text.replace("\n", " ").strip()
         
-        # 0. Force deterministic offline vector for fast local tests
+        # 0. Force deterministic offline vector for explicit local tests ONLY
         import os
         if self.force_deterministic or os.environ.get("THREAD_FORCE_DETERMINISTIC_EMBEDDINGS") == "1":
             self._active_model_name = "deterministic-v1"
             return self._deterministic_vector(text)
 
-        # 1. Try Gemini (768 dimensions)
+        # 1. Try Gemini (768 dimensions) with centralized model
         if settings.has_gemini:
             try:
                 from langchain_google_genai import GoogleGenerativeAIEmbeddings
                 embedder = GoogleGenerativeAIEmbeddings(
-                    model="models/text-embedding-004",
-                    google_api_key=settings.GEMINI_API_KEY
+                    model=settings.DEFAULT_EMBEDDING_MODEL,
+                    google_api_key=settings.gemini_api_key
                 )
                 vec = embedder.embed_query(text)
-                if len(vec) == settings.EMBEDDING_DIMENSION:
-                    self._active_model_name = "models/text-embedding-004"
+                if len(vec) >= settings.EMBEDDING_DIMENSION:
+                    if len(vec) > settings.EMBEDDING_DIMENSION:
+                        vec = vec[:settings.EMBEDDING_DIMENSION]
+                        norm = math.sqrt(sum(x * x for x in vec)) or 1.0
+                        vec = [x / norm for x in vec]
+                    self._active_model_name = settings.DEFAULT_EMBEDDING_MODEL
                     return vec
             except Exception:
                 pass
@@ -61,9 +65,9 @@ class MemoryStore:
             except Exception:
                 pass
 
-        # 3. Deterministic semantic hash vector fallback (768 dimensions)
-        self._active_model_name = "deterministic-v1"
-        return self._deterministic_vector(text)
+        # Production Runtime: NO silent hash-vector fallback! Return None to trigger sparse_only retrieval.
+        self._active_model_name = "sparse_only"
+        return None
 
     def _deterministic_vector(self, text: str) -> List[float]:
         dim = settings.EMBEDDING_DIMENSION  # Enforce exact 768 dimensions
@@ -95,8 +99,9 @@ class MemoryStore:
             text_to_embed = f"{chunk.title or ''} {chunk.author} {' '.join(chunk.tags)}: {chunk.content}"
             chunk.embedding = self._get_embedding(text_to_embed)
 
-        chunk.provenance.setdefault("embedding_model", getattr(self, "_active_model_name", "deterministic-v1"))
-        chunk.provenance.setdefault("embedding_dimension", settings.EMBEDDING_DIMENSION)
+        active_model = getattr(self, "_active_model_name", "sparse_only")
+        chunk.provenance.setdefault("embedding_model", active_model if chunk.embedding is not None else "sparse_only")
+        chunk.provenance.setdefault("embedding_dimension", settings.EMBEDDING_DIMENSION if chunk.embedding is not None else 0)
 
         ext_id = chunk.provenance.get("message_id") or chunk.provenance.get("external_id")
         if ext_id:

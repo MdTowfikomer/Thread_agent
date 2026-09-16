@@ -42,7 +42,7 @@ class Settings:
     # Defaults
     DEFAULT_DOMAIN: str = "gdg_mcet"
     EMBEDDING_DIMENSION: int = 768
-    DEFAULT_EMBEDDING_MODEL: str = "models/text-embedding-004"
+    DEFAULT_EMBEDDING_MODEL: str = os.getenv("THREAD_EMBEDDING_MODEL", "models/gemini-embedding-001")
     
     # Authentication & Security Boundary
     @property

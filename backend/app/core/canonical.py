@@ -270,6 +270,8 @@ class RetrievalReceipt(BaseModel):
     scores: Dict[str, float]
     source_types: List[SourceType]
     retrieval_strategy: str = "deterministic_hybrid_cosine_lexical_pre_acl"
+    query_embedding_model: Optional[str] = None
+    retrieval_mode: Optional[str] = "dense_and_sparse"
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 # 8. EvidencePack

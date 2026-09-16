@@ -86,10 +86,10 @@ def test_inbound_query_service_conversational_queries():
 def test_inbound_query_service_organizational_query():
     """
     Contract test:
-    'what is GDG MCET's next workshop?' -> organizational facts query -> ACL-protected retrieval triggered.
+    'what is GDG MCET's sponsorship budget for DevFest?' -> organizational facts query -> ACL-protected retrieval triggered.
     """
     principal = make_principal()
-    query = "what is GDG MCET's next workshop?"
+    query = "what is GDG MCET's sponsorship budget for DevFest?"
 
     res = inbound_agent_query_service.process_query(
         query=query,

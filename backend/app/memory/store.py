@@ -30,14 +30,21 @@ class MemoryStore:
             self._active_model_name = "deterministic-v1"
             return self._deterministic_vector(text)
 
-        # 1. Try Gemini (768 dimensions) with centralized model
+        # 1. Try Gemini (768 dimensions requested directly from provider)
         if settings.has_gemini:
             try:
                 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-                embedder = GoogleGenerativeAIEmbeddings(
-                    model=settings.DEFAULT_EMBEDDING_MODEL,
-                    google_api_key=settings.gemini_api_key
-                )
+                try:
+                    embedder = GoogleGenerativeAIEmbeddings(
+                        model=settings.DEFAULT_EMBEDDING_MODEL,
+                        google_api_key=settings.gemini_api_key,
+                        output_dimensionality=settings.EMBEDDING_DIMENSION
+                    )
+                except Exception:
+                    embedder = GoogleGenerativeAIEmbeddings(
+                        model=settings.DEFAULT_EMBEDDING_MODEL,
+                        google_api_key=settings.gemini_api_key
+                    )
                 vec = embedder.embed_query(text)
                 if len(vec) >= settings.EMBEDDING_DIMENSION:
                     if len(vec) > settings.EMBEDDING_DIMENSION:

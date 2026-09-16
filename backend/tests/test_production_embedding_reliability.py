@@ -146,8 +146,8 @@ def test_mixed_embedding_models_are_excluded_during_dense_search():
 
 # 5. Live provider embedding smoke test (Opt-In)
 @pytest.mark.skipif(
-    not (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")),
-    reason="Opt-in live provider smoke test requires GEMINI_API_KEY"
+    os.getenv("THREAD_RUN_LIVE_PROVIDER_TESTS") != "1" or not (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")),
+    reason="Opt-in live provider smoke test requires THREAD_RUN_LIVE_PROVIDER_TESTS=1 and GEMINI_API_KEY"
 )
 def test_live_gemini_provider_embedding_smoke_test():
     from app.memory.store import MemoryStore

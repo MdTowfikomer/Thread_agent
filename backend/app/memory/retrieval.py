@@ -300,13 +300,26 @@ class RetrievalService:
             )
 
         query_vec = self.store._get_embedding(query)
-        hybrid_results = self.supabase_store.hybrid_search(
-            query=query,
-            query_embedding=query_vec,
-            organization_id=org_id,
-            allowed_scopes=access_context.allowed_scopes,
-            match_count=top_k * 2
-        )
+        active_model = getattr(self.store, "_active_model_name", "sparse_only")
+        if query_vec is None:
+            retrieval_mode = "sparse_only"
+            query_model = "sparse_only"
+            hybrid_results = self.supabase_store.fts_search(
+                query=query,
+                organization_id=org_id,
+                allowed_scopes=access_context.allowed_scopes,
+                match_count=top_k * 2
+            )
+        else:
+            retrieval_mode = "hybrid_vector_fts"
+            query_model = active_model
+            hybrid_results = self.supabase_store.hybrid_search(
+                query=query,
+                query_embedding=query_vec,
+                organization_id=org_id,
+                allowed_scopes=access_context.allowed_scopes,
+                match_count=top_k * 2
+            )
 
         if not hybrid_results:
             return None
@@ -385,7 +398,9 @@ class RetrievalService:
             selected_item_ids=selected_ids,
             scores=scores_map,
             source_types=source_types,
-            retrieval_strategy="supabase_pgvector_fts_rrf_pre_acl"
+            retrieval_strategy="supabase_pgvector_fts_rrf_pre_acl",
+            query_embedding_model=query_model,
+            retrieval_mode=retrieval_mode
         )
 
         return EvidencePack(

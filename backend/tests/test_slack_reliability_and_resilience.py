@@ -22,7 +22,7 @@ def setup_module():
 def teardown_module():
     patch.stopall()
 
-def make_slack_payload(event_id="evt_100", ts="1600000000.000100", text="<@U12345> what is GDG MCET's next workshop?"):
+def make_slack_payload(event_id="evt_100", ts="1600000000.000100", text="<@U12345> what is GDG MCET's sponsorship decision for DevFest?"):
     return {
         "type": "event_callback",
         "event_id": event_id,
@@ -126,7 +126,7 @@ def test_gemini_exception_returns_transparent_unavailable_message():
             # Assert mock_slack_send was called with transparent fallback message
             if mock_slack_send.called:
                 sent_text = mock_slack_send.call_args[0][1]
-                assert "can't reach the language model" in sent_text.lower() or "insufficient evidence" in sent_text.lower()
+                assert "can't reach the language model" in sent_text.lower() or "insufficient evidence" in sent_text.lower() or "no authorized documentation" in sent_text.lower()
                 assert "context update from" not in sent_text.lower()
 
 

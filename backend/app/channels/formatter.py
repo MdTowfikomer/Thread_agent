@@ -45,6 +45,8 @@ def clean_debug_headers_and_footers(text: Any) -> str:
     # Remove '**Context Update from ...**:' headers
     text_str = re.sub(r"\*\*Context Update from[^*]+\*\*:\s*", "", text_str, flags=re.IGNORECASE)
     text_str = re.sub(r"Context Update from[^:\n]+:\s*", "", text_str, flags=re.IGNORECASE)
+    text_str = re.sub(r"^Based on verified (?:organizational )?records (?:in|for) [^:\n]+:\s*", "", text_str, flags=re.IGNORECASE)
+
 
     # Remove '*(Confidence: ... | Receipt ID: ...)*' footers
     text_str = re.sub(r"\*\s*\(\s*Confidence:[^*]+\*\s*", "", text_str, flags=re.IGNORECASE)

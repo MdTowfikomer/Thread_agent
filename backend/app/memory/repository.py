@@ -35,13 +35,19 @@ class MemoryRepository:
             text_to_embed = f"{chunk.title or ''} {chunk.author} {' '.join(chunk.tags)}: {chunk.content}"
             chunk.embedding = self.in_memory._get_embedding(text_to_embed)
 
-        if len(chunk.embedding) != settings.EMBEDDING_DIMENSION:
-            raise ValueError(
-                f"Embedding dimension mismatch: expected {settings.EMBEDDING_DIMENSION}, got {len(chunk.embedding)}"
-            )
+        if chunk.embedding is not None:
+            if len(chunk.embedding) != settings.EMBEDDING_DIMENSION:
+                raise ValueError(
+                    f"Embedding dimension mismatch: expected {settings.EMBEDDING_DIMENSION}, got {len(chunk.embedding)}"
+                )
+            chunk.provenance.setdefault("embedding_model", getattr(self.in_memory, "_active_model_name", settings.DEFAULT_EMBEDDING_MODEL))
+            chunk.provenance.setdefault("embedding_dimension", settings.EMBEDDING_DIMENSION)
+            chunk.embedding_status = "ready"
+        else:
+            chunk.provenance["embedding_model"] = "sparse_only"
+            chunk.provenance["embedding_dimension"] = 0
+            chunk.embedding_status = "pending"  # Queued for re-embedding
 
-        chunk.provenance.setdefault("embedding_model", getattr(self.in_memory, "_active_model_name", settings.DEFAULT_EMBEDDING_MODEL))
-        chunk.provenance.setdefault("embedding_dimension", settings.EMBEDDING_DIMENSION)
         return chunk
 
     def save_record(self, record: SourceRecord) -> bool:

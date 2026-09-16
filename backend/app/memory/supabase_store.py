@@ -321,10 +321,82 @@ class SupabaseMemoryStore:
 
         return 0, 0
 
+    def fts_search(
+        self,
+        query: str,
+        organization_id: str,
+        allowed_scopes: List[PermissionLevel],
+        match_count: int = 10
+    ) -> List[Tuple[float, MemoryChunk, float, float, int, int]]:
+        """
+        Execute server-side, ACL-enforced FTS-only lexical keyword retrieval against Supabase / PostgreSQL.
+        Used when query embedding is unavailable (sparse_only mode).
+        Returns: List of (fts_score, chunk, 0.0, fts_rank, 0, lexical_rank)
+        """
+        scope_values = [s.value for s in allowed_scopes]
+
+        if self.client:
+            try:
+                rpc_params = {
+                    "query_text": query,
+                    "match_count": match_count,
+                    "filter_organization_id": organization_id,
+                    "filter_permissions": scope_values
+                }
+                res = self.client.rpc("fts_search", rpc_params).execute()
+                rows = res.data or []
+                results = []
+                for idx, row in enumerate(rows, 1):
+                    chunk = self._row_to_chunk(row)
+                    fts_rank = float(row.get("fts_rank") or row.get("rank") or 0.0)
+                    results.append((fts_rank, chunk, 0.0, fts_rank, 0, idx))
+                return results
+            except Exception as e:
+                logger.error(f"Supabase fts_search RPC failed: {e}")
+
+        db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+        if db_url:
+            try:
+                import psycopg2
+                with psycopg2.connect(db_url) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("""
+                            SELECT 
+                                id, source_record_id, organization_id, source_type, source_uri,
+                                source_timestamp, source_hash, ingestion_version, policy_version,
+                                author, author_role, title, content, permission, tags, entities,
+                                provenance, ts_rank_cd(fts, websearch_to_tsquery('english', %s)) as fts_rank
+                            FROM memory_chunks
+                            WHERE organization_id = %s
+                              AND permission = ANY(%s)
+                              AND fts @@ websearch_to_tsquery('english', %s)
+                            ORDER BY fts_rank DESC
+                            LIMIT %s;
+                        """, (query, organization_id, scope_values, query, match_count))
+                        rows = cur.fetchall()
+                        results = []
+                        for idx, r in enumerate(rows, 1):
+                            row_dict = {
+                                "id": r[0], "source_record_id": r[1], "organization_id": r[2],
+                                "source_type": r[3], "source_uri": r[4], "source_timestamp": r[5],
+                                "source_hash": r[6], "ingestion_version": r[7], "policy_version": r[8],
+                                "author": r[9], "author_role": r[10], "title": r[11], "content": r[12],
+                                "permission": r[13], "tags": r[14], "entities": r[15], "provenance": r[16]
+                            }
+                            chunk = self._row_to_chunk(row_dict)
+                            fts_rank = float(r[17] or 0.0)
+                            results.append((fts_rank, chunk, 0.0, fts_rank, 0, idx))
+                        return results
+            except Exception as e:
+                logger.error(f"PostgreSQL direct FTS search failed: {e}")
+                return []
+
+        return []
+
     def hybrid_search(
         self,
         query: str,
-        query_embedding: List[float],
+        query_embedding: Optional[List[float]],
         organization_id: str,
         allowed_scopes: List[PermissionLevel],
         match_count: int = 10,
@@ -333,8 +405,16 @@ class SupabaseMemoryStore:
         """
         Execute pre-retrieval ACL filtered hybrid search via Supabase RPC or direct PostgreSQL query.
         Combines pgvector cosine similarity with tsvector FTS using Reciprocal Rank Fusion (RRF).
-        Returns: List of (combined_score, chunk, similarity, fts_rank, dense_rank, lexical_rank)
+        If query_embedding is None, delegates cleanly to server-side ACL-enforced fts_search.
         """
+        if query_embedding is None:
+            return self.fts_search(
+                query=query,
+                organization_id=organization_id,
+                allowed_scopes=allowed_scopes,
+                match_count=match_count
+            )
+
         if len(query_embedding) != settings.EMBEDDING_DIMENSION:
             raise ValueError(
                 f"Query embedding dimension mismatch: expected {settings.EMBEDDING_DIMENSION}, got {len(query_embedding)}"
@@ -350,7 +430,8 @@ class SupabaseMemoryStore:
                     "match_count": match_count,
                     "filter_organization_id": organization_id,
                     "filter_permissions": scope_values,
-                    "rrf_k": rrf_k
+                    "rrf_k": rrf_k,
+                    "filter_embedding_model": settings.DEFAULT_EMBEDDING_MODEL
                 }
                 res = self.client.rpc("hybrid_search", rpc_params).execute()
                 rows = res.data or []
@@ -368,7 +449,7 @@ class SupabaseMemoryStore:
                 return results
             except Exception as e:
                 logger.error(f"Supabase hybrid search failed: {e}")
-                return []
+                return self.fts_search(query, organization_id, allowed_scopes, match_count)
 
         db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
         if db_url:
@@ -383,8 +464,8 @@ class SupabaseMemoryStore:
                                 source_timestamp, source_hash, ingestion_version, policy_version,
                                 author, author_role, title, content, permission, tags, entities,
                                 provenance, similarity, fts_rank, combined_score, dense_rank, lexical_rank
-                            FROM hybrid_search(%s, %s::vector, %s, %s, %s, %s);
-                        """, (query, embedding_str, match_count, organization_id, scope_values, rrf_k))
+                            FROM hybrid_search(%s, %s::vector, %s, %s, %s, %s, %s);
+                        """, (query, embedding_str, match_count, organization_id, scope_values, rrf_k, settings.DEFAULT_EMBEDDING_MODEL))
                         rows = cur.fetchall()
                         results = []
                         for r in rows:
@@ -409,7 +490,7 @@ class SupabaseMemoryStore:
                         return results
             except Exception as e:
                 logger.error(f"PostgreSQL direct hybrid search failed: {e}")
-                return []
+                return self.fts_search(query, organization_id, allowed_scopes, match_count)
 
         return []
 

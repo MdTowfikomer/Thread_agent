@@ -69,19 +69,20 @@ def classify_intent_and_routing(query: str, ws) -> Tuple[str, Optional[str], Opt
         return "TOOL_EXECUTION", "summary", "", ws.roles[0]
     if q_lower.startswith("!github") or q_lower.startswith("!repo"):
         role = next((r for r in ws.roles if r.id == "tech_lead"), ws.roles[0])
-        return "TOOL_EXECUTION", "github", "", role
+        arg = q_stripped.split(maxsplit=1)[1] if len(q_stripped.split()) > 1 else ""
+        return "TOOL_EXECUTION", "github", arg.strip(), role
     if q_lower.startswith("!link"):
         role = next((r for r in ws.roles if r.id == "community_lead"), ws.roles[0])
         arg = q_stripped[5:].strip()
         return "TOOL_EXECUTION", "link", arg, role
 
     # 2. Natural language tool queries
-    if any(k in q_lower for k in ("upcoming event", "next event", "upcoming workshop", "when is the hackathon", "event schedule", "events list")):
+    if any(k in q_lower for k in ("event", "events", "workshop", "workshops", "hackathon", "meetup", "session")):
         role = next((r for r in ws.roles if r.id == "organizer_lead"), ws.roles[0])
-        return "TOOL_EXECUTION", "events", "", role
-    if any(k in q_lower for k in ("github repo", "github link", "how to contribute to github", "source code repo", "official repository")):
+        return "TOOL_EXECUTION", "events", q_stripped, role
+    if any(k in q_lower for k in ("github", "commit", "commits", "repo", "repository")):
         role = next((r for r in ws.roles if r.id == "tech_lead"), ws.roles[0])
-        return "TOOL_EXECUTION", "github", "", role
+        return "TOOL_EXECUTION", "github", q_stripped, role
     if any(k in q_lower for k in ("summarize this channel", "summarize our discussion", "recap discussion", "summarize channel")):
         return "TOOL_EXECUTION", "summary", "", ws.roles[0]
     if any(k in q_lower for k in ("community guidelines", "discord rules", "code of conduct", "how do i link")):
@@ -282,88 +283,6 @@ def role_agent_node(state: GraphState) -> Dict[str, Any]:
     }
 
 
-# --- NODE 4: SYNTHESIS AGENT (STRICT GROUNDING - NO BLUFFING) ---
-def synthesis_node(state: GraphState) -> Dict[str, Any]:
-    ws = get_workspace(state.organization_id)
-    role = get_role_agent(state.organization_id, state.target_role_id)
-    role_name = role.name if role else "ThreadAgent"
-    role_title = role.role if role else "Assistant"
-    role_style = role.style if role else "Clear, professional, and precise."
-
-    # 1. TOOL EXECUTION BRANCH
-    if state.intent_category == "TOOL_EXECUTION":
-        final_answer = ""
-        tool = state.tool_name or ""
-        if tool == "events":
-            events = event_assistant.list_upcoming_events(state.organization_id)
-            final_answer = event_assistant.format_events_response(events)
-        elif tool == "resources":
-            resources = resource_assistant.search_resources(
-                query=state.tool_args or "",
-                org_id=state.organization_id,
-                access_context=state.access_context
-            )
-            final_answer = resource_assistant.format_resources_response(resources)
-        elif tool == "summary":
-            parts = (state.session_key or "").split(":")
-            platform = parts[0] if len(parts) > 0 and parts[0] else "discord"
-            channel_id = parts[1] if len(parts) > 1 and parts[1] else (state.session_key or "")
-            final_answer = summarizer_assistant.summarize_channel_discussion(
-                organization_id=state.organization_id,
-                channel_id=channel_id,
-                platform=platform,
-                access_context=state.access_context,
-                window_hours=48
-            )
-        elif tool == "github":
-            repo = github_helper.get_bound_repository(state.organization_id)
-            final_answer = github_helper.format_github_response(repo)
-        elif tool == "link":
-            arg = (state.tool_args or "").strip()
-            parts = (state.session_key or "").split(":")
-            plat = parts[0] if len(parts) > 0 and parts[0] else "community"
-            user_id = state.access_context.user_id if state.access_context else "anon"
-            if arg:
-                _, final_answer = account_link_tool.redeem_link_token(
-                    raw_token=arg,
-                    target_platform=plat,
-                    target_account_id=user_id,
-                    target_username=user_id,
-                    org_id=state.organization_id
-                )
-            else:
-                tok = account_link_tool.generate_link_token(
-                    initiating_platform=plat,
-                    initiating_account_id=user_id,
-                    initiating_username=user_id,
-                    person_id=user_id,
-                    org_id=state.organization_id
-                )
-                final_answer = (
-                    f"🔗 **Cross-Platform Account Linking**\n\n"
-                    f"Here is your temporary linking token: `{tok}` *(valid for 30 minutes)*.\n\n"
-                    f"**Next Steps:**\n"
-                    f"1. Open Slack, Telegram, or Discord (wherever your other account is).\n"
-                    f"2. Send `!link {tok}` to ThreadAgent.\n"
-                    f"3. Your accounts, conversation history, and roles will be synchronized across platforms!"
-                )
-        else:
-            final_answer = f"Tool '{tool}' executed."
-
-        new_trace = list(state.trace)
-        new_trace.append({
-            "step": "synthesis",
-            "agent_id": "synthesis_agent",
-            "agent_name": "ThreadAgent",
-            "status": "completed",
-            "message": f"Executed tool '{tool}' successfully.",
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        })
-        return {
-            "final_answer": final_answer,
-            "trace": new_trace
-        }
-
 def invoke_llm_with_fallback(llm, system_prompt: str) -> Optional[str]:
     """
     Safely invoke the LLM. If the primary model encounters a 429 quota error or failure,
@@ -428,6 +347,10 @@ def synthesis_node(state: GraphState) -> Dict[str, Any]:
     role_title = role.role if role else "Assistant"
     role_style = role.style if role else "Clear, professional, and precise."
 
+    # Inspect durable conversation history to enforce single intro per session
+    assistant_turns = [h for h in (state.chat_history or []) if h.get("role") == "assistant"]
+    is_first_turn = len(assistant_turns) == 0
+
     # 1. TOOL EXECUTION BRANCH
     if state.intent_category == "TOOL_EXECUTION":
         final_answer = ""
@@ -455,7 +378,8 @@ def synthesis_node(state: GraphState) -> Dict[str, Any]:
             )
         elif tool == "github":
             repo = github_helper.get_bound_repository(state.organization_id)
-            final_answer = github_helper.format_github_response(repo)
+            query_str = state.query or state.tool_args or ""
+            final_answer = github_helper.format_github_response(repo, query=query_str, org_id=state.organization_id)
         elif tool == "link":
             arg = (state.tool_args or "").strip()
             parts = (state.session_key or "").split(":")
@@ -514,11 +438,22 @@ def synthesis_node(state: GraphState) -> Dict[str, Any]:
                 f"{h.get('role', 'user').capitalize()}: {h.get('content', '')}" for h in state.chat_history[-6:]
             ]) + "\n\n"
 
+        if is_first_turn:
+            turn_instructions = (
+                "This is the INITIAL turn in this conversation session. "
+                "Briefly introduce ThreadAgent once if this is a greeting or general introduction inquiry."
+            )
+        else:
+            turn_instructions = (
+                "CRITICAL: This is a SUBSEQUENT turn in an ongoing conversation session. "
+                "DO NOT introduce yourself ('Hello! I am ThreadAgent'), DO NOT re-list your capabilities, "
+                "and DO NOT use retrieval narration or preambles. Answer the user's question directly and concisely."
+            )
+
         system_prompt = f"""You are ThreadAgent, an intelligent and helpful AI community assistant for {ws.name}.
 Persona Style: Friendly, clear, intelligent, and concise.
 
-You are conversing with a community member in an open developer channel.
-Answer questions directly, politely, and accurately using your general knowledge. Do NOT pre-pend role headers, debug prefixes, or debug footers.
+{turn_instructions}
 
 {history_str}User Message: {state.query}
 """
@@ -527,11 +462,14 @@ Answer questions directly, politely, and accurately using your general knowledge
         if result_text:
             answer = result_text
         elif is_greeting:
-            answer = (
-                f"Hello! I am ThreadAgent, your community assistant for {ws.name}.\n\n"
-                f"I can help answer your technical questions, guide you on developer topics, and provide updates about our community events and records. "
-                f"Feel free to ask me anything or type `!events`, `!faq`, `!github`, or `!summary`!"
-            )
+            if is_first_turn:
+                answer = (
+                    f"Hello! I am ThreadAgent, your community assistant for {ws.name}.\n\n"
+                    f"I can help answer your technical questions, guide you on developer topics, and provide updates about our community events and records. "
+                    f"Feel free to ask me anything or type `!events`, `!faq`, `!github`, or `!summary`!"
+                )
+            else:
+                answer = "Hello! How can I help you today?"
         else:
             answer = "I can't reach the language model right now. Please try again shortly."
 
@@ -553,10 +491,13 @@ Answer questions directly, politely, and accurately using your general knowledge
     evidence = state.evidence_pack
 
     if not evidence or not evidence.sufficient_evidence or len(evidence.citations) == 0:
-        final_answer = (
-            f"Based on verified organizational records in **{ws.name}**, there is **insufficient evidence** to answer this inquiry.\n\n"
-            f"No authorized documentation matching this inquiry was found within your access scope."
-        )
+        if is_first_turn:
+            final_answer = (
+                f"Based on verified organizational records in **{ws.name}**, there is **insufficient evidence** to answer this inquiry.\n\n"
+                f"No authorized documentation matching this inquiry was found within your access scope."
+            )
+        else:
+            final_answer = f"No authorized documentation matching this inquiry was found within your access scope in **{ws.name}**."
         new_trace = list(state.trace)
         new_trace.append({
             "step": "synthesis",
@@ -577,15 +518,22 @@ Answer questions directly, politely, and accurately using your general knowledge
         for c in evidence.citations
     ])
 
+    if is_first_turn:
+        turn_instructions = (
+            "Synthesize a clear, helpful response answering the user's query based strictly on the verified EvidencePack below.\n"
+            "CRITICAL: Do NOT output raw context headers like 'Context Update from...' or internal debug logs. "
+            "Never output receipt IDs or confidence percentages."
+        )
+    else:
+        turn_instructions = (
+            "Synthesize a clear, direct, and concise response answering the user's query based strictly on the verified EvidencePack below.\n"
+            "CRITICAL: This is a SUBSEQUENT turn. DO NOT introduce yourself or say 'Hello! I am ThreadAgent'. "
+            "DO NOT use narrative preambles like 'Based on verified organizational records in...'. Answer the user's question directly."
+        )
+
     system_prompt = f"""You are ThreadAgent, the intelligent community assistant at {ws.name}.
 
-Synthesize a clear, helpful, human-readable prose response answering the user's query based strictly on the verified EvidencePack below.
-
-CRITICAL INSTRUCTIONS:
-- Do NOT output raw context headers like "Context Update from..." or internal debug logs.
-- Introduce yourself or directly answer the user's question in plain, natural prose.
-- Never output receipt IDs or confidence percentages in your response text.
-- Summarize the relevant facts into a clear narrative in ThreadAgent's voice.
+{turn_instructions}
 
 Verified EvidencePack:
 {context_str}
@@ -597,7 +545,7 @@ User Query: {state.query}
     if result_text:
         answer = result_text
     else:
-        answer = f"Based on verified records for **{ws.name}**:\n\n{context_str}"
+        answer = context_str
 
     new_trace = list(state.trace)
     new_trace.append({

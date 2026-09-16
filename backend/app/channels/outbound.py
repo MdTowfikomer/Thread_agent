@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional, Protocol, Tuple
 
 import httpx
 
+from app.channels.formatter import format_response_for_platform
 from app.channels.installation import guild_installation_store, slack_binding_store, telegram_binding_store
 from app.channels.policy import channel_policy_store
 from app.core.auth import AuthenticatedPrincipal
@@ -63,10 +64,11 @@ class SlackOutboundAdapter:
     def send(self, destination, text, idempotency_key):
         if not settings.slack_bot_token:
             raise OutboundProviderError("SLACK_BOT_TOKEN is not configured.")
+        formatted_text = format_response_for_platform(text, ChannelType.SLACK)
         data = _provider_post(
             "https://slack.com/api/chat.postMessage",
             {"Authorization": f"Bearer {settings.slack_bot_token}"},
-            {"channel": destination["channel_id"], "text": text},
+            {"channel": destination["channel_id"], "text": formatted_text},
         )
         return str(data.get("ts") or data.get("message", {}).get("ts") or "")
 
@@ -75,10 +77,11 @@ class TelegramOutboundAdapter:
     def send(self, destination, text, idempotency_key):
         if not settings.telegram_bot_token:
             raise OutboundProviderError("TELEGRAM_BOT_TOKEN is not configured.")
+        formatted_text = format_response_for_platform(text, ChannelType.TELEGRAM)
         data = _provider_post(
             f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage",
             {},
-            {"chat_id": destination["chat_id"], "text": text},
+            {"chat_id": destination["chat_id"], "text": formatted_text, "parse_mode": "HTML"},
         )
         return str(data.get("result", {}).get("message_id") or "")
 
@@ -87,7 +90,8 @@ class DiscordOutboundAdapter:
     def send(self, destination, text, idempotency_key):
         if not settings.discord_bot_token:
             raise OutboundProviderError("DISCORD_BOT_TOKEN is not configured.")
-        safe_text = text if len(text) <= 1950 else text[:1940] + "...\n*(truncated)*"
+        formatted_text = format_response_for_platform(text, ChannelType.DISCORD)
+        safe_text = formatted_text if len(formatted_text) <= 1950 else formatted_text[:1940] + "...\n*(truncated)*"
         data = _provider_post(
             f"https://discord.com/api/v10/channels/{destination['channel_id']}/messages",
             {"Authorization": f"Bot {settings.discord_bot_token}"},

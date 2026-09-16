@@ -86,7 +86,28 @@ def classify_intent_and_routing(query: str, ws) -> Tuple[str, Optional[str], Opt
         role = next((r for r in ws.roles if r.id == "community_lead"), ws.roles[0])
         return "TOOL_EXECUTION", "resources", q_lower, role
 
-    # 3. Match best role by expertise keywords
+    # 3. Conversational greetings and small talk
+    greetings = ("hello", "hi", "hey", "good morning", "good evening", "good afternoon", "greetings")
+    conversational_phrases = ("how are you", "who are you", "what can you do", "help me", "can you help", "tell me about yourself", "what is your name")
+
+    if (
+        any(q_lower.startswith(g) for g in greetings)
+        or any(p in q_lower for p in conversational_phrases)
+        or q_lower in greetings
+    ):
+        return "GENERAL_KNOWLEDGE", None, None, ws.roles[0]
+
+    # Explicit organizational indicators
+    org_indicators = (
+        "gdg", "mcet", "devfest", "budget", "sponsor", "sponsorship", "meeting", "minutes",
+        "decision", "reimbursement", "vendor", "venue", "internal", "quarantine", "provenance",
+        "policy", "attendance", "proposal", "retro", "receipt", "audit", "secret", "private",
+        "mariana", "submarine", "protocol", "record", "records", "event announced", "updates event",
+        "workshop", "prerequisite", "prerequisites", "launch", "titan", "project", "channel", "ingest"
+    )
+
+    is_org_query = any(ind in q_lower for ind in org_indicators)
+
     best_role = ws.roles[0]
     matched_expertise = False
     for role in ws.roles:
@@ -98,28 +119,12 @@ def classify_intent_and_routing(query: str, ws) -> Tuple[str, Optional[str], Opt
         if matched_expertise:
             break
 
-    # 4. Check for conversational greetings / small talk
-    greetings = ("hello", "hi", "hey", "good morning", "good evening", "good afternoon", "greetings")
-    conversational_phrases = ("how are you", "who are you", "what can you do", "help me", "can you help", "tell me about yourself")
-    if (
-        any(q_lower.startswith(g) for g in greetings)
-        or any(p in q_lower for p in conversational_phrases)
-        or q_lower in greetings
-    ):
-        return "GENERAL_KNOWLEDGE", None, None, best_role
-
-    # 5. Check if query is an organizational search vs general knowledge
-    org_indicators = (
-        "gdg", "mcet", "devfest", "budget", "sponsor", "sponsorship", "meeting", "minutes",
-        "decision", "reimbursement", "vendor", "venue", "internal", "quarantine", "provenance",
-        "policy", "attendance", "proposal", "retro", "receipt", "audit", "secret", "private",
-        "mariana", "submarine", "protocol", "record", "records"
-    )
-    if any(ind in q_lower for ind in org_indicators) or matched_expertise:
+    # If it matched role expertise or explicit org indicators, it's ORGANIZATIONAL_FACTS
+    if matched_expertise or is_org_query:
         return "ORGANIZATIONAL_FACTS", None, None, best_role
 
-    # General technical question or conversational programming guidance
-    general_question_starters = ("what is", "how do", "how does", "explain", "why does", "tell me about", "can you explain", "write a")
+    # Pure general conceptual/educational questions (e.g. "what is state space in RL") with no role match
+    general_question_starters = ("what is a ", "what is an ", "can you explain", "can u explain", "how does ", "explain ")
     if any(q_lower.startswith(s) for s in general_question_starters):
         return "GENERAL_KNOWLEDGE", None, None, best_role
 
@@ -261,8 +266,8 @@ def role_agent_node(state: GraphState) -> Dict[str, Any]:
 def synthesis_node(state: GraphState) -> Dict[str, Any]:
     ws = get_workspace(state.organization_id)
     role = get_role_agent(state.organization_id, state.target_role_id)
-    role_name = role.name if role else "Thread Agent"
-    role_title = role.role if role else "Lead"
+    role_name = role.name if role else "ThreadAgent"
+    role_title = role.role if role else "Assistant"
     role_style = role.style if role else "Clear, professional, and precise."
 
     # 1. TOOL EXECUTION BRANCH
@@ -319,7 +324,7 @@ def synthesis_node(state: GraphState) -> Dict[str, Any]:
                     f"Here is your temporary linking token: `{tok}` *(valid for 30 minutes)*.\n\n"
                     f"**Next Steps:**\n"
                     f"1. Open Slack, Telegram, or Discord (wherever your other account is).\n"
-                    f"2. Send `!link {tok}` to Thread Agent.\n"
+                    f"2. Send `!link {tok}` to ThreadAgent.\n"
                     f"3. Your accounts, conversation history, and roles will be synchronized across platforms!"
                 )
         else:
@@ -329,7 +334,7 @@ def synthesis_node(state: GraphState) -> Dict[str, Any]:
         new_trace.append({
             "step": "synthesis",
             "agent_id": "synthesis_agent",
-            "agent_name": f"{role_name} ({role_title})",
+            "agent_name": "ThreadAgent",
             "status": "completed",
             "message": f"Executed tool '{tool}' successfully.",
             "timestamp": datetime.now(timezone.utc).isoformat()
@@ -349,12 +354,11 @@ def synthesis_node(state: GraphState) -> Dict[str, Any]:
                     f"{h.get('role', 'user').capitalize()}: {h.get('content', '')}" for h in state.chat_history[-6:]
                 ]) + "\n\n"
 
-            system_prompt = f"""You are {role_name}, the {role_title} at {ws.name}.
-Persona Style: {role_style}
+            system_prompt = f"""You are ThreadAgent, an intelligent and helpful AI community assistant for {ws.name}.
+Persona Style: Friendly, clear, intelligent, and concise.
 
 You are conversing with a community member in an open developer channel.
-Be welcoming, intelligent, concise, and helpful.
-Answer questions directly, politely, and accurately.
+Answer questions directly, politely, and accurately using your general knowledge. Do NOT pre-pend role headers or debug prefixes.
 
 {history_str}User Message: {state.query}
 """
@@ -363,14 +367,14 @@ Answer questions directly, politely, and accurately.
                 answer = res.content if hasattr(res, "content") else str(res)
             except Exception:
                 answer = (
-                    f"Hello! I am **{role_name}**, {role_title} at **{ws.name}**.\n\n"
-                    f"I'm here to assist you with questions about our developer community, upcoming events, workshops, and verified team records. "
+                    f"Hello! I am ThreadAgent, your community assistant for {ws.name}.\n\n"
+                    f"I can help answer your technical questions, guide you on developer topics, and provide updates about our community events and records. "
                     f"Feel free to ask me anything or type `!events`, `!faq`, `!github`, or `!summary`!"
                 )
         else:
             answer = (
-                f"Hello! I am **{role_name}**, {role_title} at **{ws.name}**.\n\n"
-                f"I'm here to assist you with questions about our developer community, upcoming events, workshops, and verified team records. "
+                f"Hello! I am ThreadAgent, your community assistant for {ws.name}.\n\n"
+                f"I can help answer your technical questions, guide you on developer topics, and provide updates about our community events and records. "
                 f"Feel free to ask me anything or type `!events`, `!faq`, `!github`, or `!summary`!"
             )
 
@@ -378,7 +382,7 @@ Answer questions directly, politely, and accurately.
         new_trace.append({
             "step": "synthesis",
             "agent_id": "synthesis_agent",
-            "agent_name": f"{role_name} ({role_title})",
+            "agent_name": "ThreadAgent",
             "status": "completed",
             "message": "Synthesized direct conversational response.",
             "timestamp": datetime.now(timezone.utc).isoformat()
@@ -391,19 +395,16 @@ Answer questions directly, politely, and accurately.
     # 3. ORGANIZATIONAL FACTS BRANCH (STRICT GROUNDING - NO BLUFFING)
     evidence = state.evidence_pack
 
-    # REQUIREMENT 5: If no sufficient evidence exists, synthesis MUST say evidence is insufficient.
-    # No bluffing. No invented facts.
     if not evidence or not evidence.sufficient_evidence or len(evidence.citations) == 0:
         final_answer = (
             f"Based on verified organizational records in **{ws.name}**, there is **insufficient evidence** to answer this inquiry.\n\n"
-            f"No authorized documentation matching '{state.query}' was found within your access scope.\n"
-            f"*(Receipt ID: `{evidence.receipt.receipt_id if evidence else 'N/A'}` | Strategy: Pre-Retrieval ACL Verification)*"
+            f"No authorized documentation matching '{state.query}' was found within your access scope."
         )
         new_trace = list(state.trace)
         new_trace.append({
             "step": "synthesis",
             "agent_id": "synthesis_agent",
-            "agent_name": f"{role_name} ({role_title})",
+            "agent_name": "ThreadAgent",
             "status": "completed",
             "message": "Emitted verified insufficient-evidence response without hallucination.",
             "timestamp": datetime.now(timezone.utc).isoformat()
@@ -413,7 +414,7 @@ Answer questions directly, politely, and accurately.
             "trace": new_trace
         }
 
-    # Format evidence citations
+    # Format evidence citations into a clear narrative context
     context_str = "\n\n".join([
         f"[{c.source.value.upper()}] from {c.author} ({c.title or 'Record'}):\n{c.snippet}"
         for c in evidence.citations
@@ -421,14 +422,14 @@ Answer questions directly, politely, and accurately.
 
     llm = get_llm()
     if llm:
-        system_prompt = f"""You are {role_name}, the {role_title} at {ws.name}.
-Persona Style: {role_style}
+        system_prompt = f"""You are ThreadAgent, the community assistant at {ws.name}.
 
-You are answering a user inquiry using ONLY the verified EvidencePack below.
-CRITICAL RULES:
-- Never hallucinate, invent dates, or bluff facts not explicitly provided in the EvidencePack.
-- Quote specific facts, dates, repos, and names from the citations.
-- Conclude with clear, actionable organizational guidance.
+Synthesize a clear, helpful, human-readable summary answering the user's query based ONLY on the verified EvidencePack below.
+RULES:
+- Never include raw context update headers like "Context Update from..." or internal debug logs.
+- Never output receipt IDs or confidence percentages in your response.
+- Summarize the relevant facts into a readable, natural narrative in ThreadAgent's voice.
+- Quote specific dates, names, or updates when relevant.
 
 Verified EvidencePack:
 {context_str}
@@ -447,7 +448,7 @@ User Query: {state.query}
     new_trace.append({
         "step": "synthesis",
         "agent_id": "synthesis_agent",
-        "agent_name": f"{role_name} ({role_title})",
+        "agent_name": "ThreadAgent",
         "status": "completed",
         "message": f"Synthesized grounded response backed by {len(evidence.citations)} verified citations.",
         "timestamp": datetime.now(timezone.utc).isoformat()
@@ -460,17 +461,16 @@ User Query: {state.query}
 
 
 def _fallback_synthesis(role_name: str, role_title: str, evidence) -> str:
-    sources_summary = "\n".join([
-        f"- **{c.title or 'Record'}** (via {c.source.value.capitalize()} by {c.author}): {c.snippet}"
-        for c in evidence.citations
-    ])
-
-    return (
-        f"**Context Update from {role_name} ({role_title})**:\n\n"
-        f"Based on our verified organizational records, here is the reconstructed context for your inquiry:\n\n"
-        f"{sources_summary}\n\n"
-        f"*(Confidence: {int(evidence.confidence_score * 100)}% | Receipt ID: `{evidence.receipt.receipt_id}`)*"
-    )
+    if evidence and evidence.citations:
+        sources_summary = "\n".join([
+            f"• {c.title or 'Record'} ({c.source.value.capitalize()}): {c.snippet}"
+            for c in evidence.citations[:3]
+        ])
+        return (
+            f"Based on our community records, here is the relevant context for your query:\n\n"
+            f"{sources_summary}"
+        )
+    return "Based on verified organizational records, no matching authorized documentation was found."
 
 
 # Build & Compile Graph

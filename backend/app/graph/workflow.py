@@ -19,17 +19,18 @@ def get_llm():
     if os.environ.get("THREAD_FORCE_DETERMINISTIC_SYNTHESIS") == "1" or os.environ.get("THREAD_FORCE_DETERMINISTIC_EMBEDDINGS") == "1":
         return None
 
-    if settings.has_gemini:
+    api_key = settings.gemini_api_key
+    if api_key:
         try:
             from langchain_google_genai import ChatGoogleGenerativeAI
-            gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+            gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
             return ChatGoogleGenerativeAI(
                 model=gemini_model,
-                google_api_key=settings.GEMINI_API_KEY,
+                google_api_key=api_key,
                 temperature=0.1
             )
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[get_llm] Gemini initialization failed: {e}")
 
     if settings.has_openai:
         try:
@@ -39,8 +40,8 @@ def get_llm():
                 openai_api_key=settings.OPENAI_API_KEY,
                 temperature=0.1
             )
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[get_llm] OpenAI initialization failed: {e}")
 
     return None
 
@@ -86,24 +87,14 @@ def classify_intent_and_routing(query: str, ws) -> Tuple[str, Optional[str], Opt
         role = next((r for r in ws.roles if r.id == "community_lead"), ws.roles[0])
         return "TOOL_EXECUTION", "resources", q_lower, role
 
-    # 3. Conversational greetings and small talk
-    greetings = ("hello", "hi", "hey", "good morning", "good evening", "good afternoon", "greetings")
-    conversational_phrases = ("how are you", "who are you", "what can you do", "help me", "can you help", "tell me about yourself", "what is your name")
-
-    if (
-        any(q_lower.startswith(g) for g in greetings)
-        or any(p in q_lower for p in conversational_phrases)
-        or q_lower in greetings
-    ):
-        return "GENERAL_KNOWLEDGE", None, None, ws.roles[0]
-
-    # Explicit organizational indicators
+    # Explicit organizational indicators win over general question starters
     org_indicators = (
         "gdg", "mcet", "devfest", "budget", "sponsor", "sponsorship", "meeting", "minutes",
         "decision", "reimbursement", "vendor", "venue", "internal", "quarantine", "provenance",
         "policy", "attendance", "proposal", "retro", "receipt", "audit", "secret", "private",
         "mariana", "submarine", "protocol", "record", "records", "event announced", "updates event",
-        "workshop", "prerequisite", "prerequisites", "launch", "titan", "project", "channel", "ingest"
+        "next workshop", "upcoming workshop", "prerequisite", "prerequisites", "launch", "titan", "project",
+        "channel policy", "ingest"
     )
 
     is_org_query = any(ind in q_lower for ind in org_indicators)
@@ -119,14 +110,31 @@ def classify_intent_and_routing(query: str, ws) -> Tuple[str, Optional[str], Opt
         if matched_expertise:
             break
 
-    # If it matched role expertise or explicit org indicators, it's ORGANIZATIONAL_FACTS
-    if matched_expertise or is_org_query:
+    if is_org_query:
         return "ORGANIZATIONAL_FACTS", None, None, best_role
 
-    # Pure general conceptual/educational questions (e.g. "what is state space in RL") with no role match
-    general_question_starters = ("what is a ", "what is an ", "can you explain", "can u explain", "how does ", "explain ")
-    if any(q_lower.startswith(s) for s in general_question_starters):
-        return "GENERAL_KNOWLEDGE", None, None, best_role
+    # 3. Broad educational/conceptual questions route to GENERAL_KNOWLEDGE
+    general_question_starters = (
+        "what is ", "what is a ", "what is an ", "what is the ", "what are ", "what are the ",
+        "define ", "explain ", "can you explain", "can u explain", "could you explain", "how does ", "how do ",
+        "why does ", "why do ", "difference between", "what is the difference", "tell me about ", "write a ", "how to "
+    )
+
+    if any(q_lower.startswith(s) for s in general_question_starters) or q_lower.startswith("what is") or q_lower.startswith("explain") or q_lower.startswith("define"):
+        return "GENERAL_KNOWLEDGE", None, None, ws.roles[0]
+
+    if matched_expertise:
+        return "ORGANIZATIONAL_FACTS", None, None, best_role
+
+    # Greetings & small talk
+    greetings = ("hello", "hi", "hey", "good morning", "good evening", "good afternoon", "greetings")
+    conversational_phrases = ("how are you", "who are you", "what can you do", "help me", "can you help", "tell me about yourself", "what is your name")
+    if (
+        any(q_lower.startswith(g) for g in greetings)
+        or any(p in q_lower for p in conversational_phrases)
+        or q_lower in greetings
+    ):
+        return "GENERAL_KNOWLEDGE", None, None, ws.roles[0]
 
     return "ORGANIZATIONAL_FACTS", None, None, best_role
 
@@ -346,6 +354,10 @@ def synthesis_node(state: GraphState) -> Dict[str, Any]:
 
     # 2. GENERAL KNOWLEDGE / CONVERSATION BRANCH
     if state.intent_category == "GENERAL_KNOWLEDGE":
+        q_lower = state.query.strip().lower()
+        greetings = ("hello", "hi", "hey", "good morning", "good evening", "good afternoon", "greetings")
+        is_greeting = any(q_lower.startswith(g) or q_lower == g for g in greetings) and len(q_lower.split()) <= 3
+
         llm = get_llm()
         if llm:
             history_str = ""
@@ -358,25 +370,28 @@ def synthesis_node(state: GraphState) -> Dict[str, Any]:
 Persona Style: Friendly, clear, intelligent, and concise.
 
 You are conversing with a community member in an open developer channel.
-Answer questions directly, politely, and accurately using your general knowledge. Do NOT pre-pend role headers or debug prefixes.
+Answer questions directly, politely, and accurately using your general knowledge. Do NOT pre-pend role headers, debug prefixes, or debug footers.
 
 {history_str}User Message: {state.query}
 """
             try:
                 res = llm.invoke(system_prompt)
                 answer = res.content if hasattr(res, "content") else str(res)
-            except Exception:
+            except Exception as e:
+                print(f"[synthesis_node] Gemini LLM invocation failed: {e}")
+                if is_greeting:
+                    answer = f"Hello! I am ThreadAgent, your community assistant for {ws.name}."
+                else:
+                    answer = "I can't reach the language model right now. Please try again shortly."
+        else:
+            if is_greeting:
                 answer = (
                     f"Hello! I am ThreadAgent, your community assistant for {ws.name}.\n\n"
                     f"I can help answer your technical questions, guide you on developer topics, and provide updates about our community events and records. "
                     f"Feel free to ask me anything or type `!events`, `!faq`, `!github`, or `!summary`!"
                 )
-        else:
-            answer = (
-                f"Hello! I am ThreadAgent, your community assistant for {ws.name}.\n\n"
-                f"I can help answer your technical questions, guide you on developer topics, and provide updates about our community events and records. "
-                f"Feel free to ask me anything or type `!events`, `!faq`, `!github`, or `!summary`!"
-            )
+            else:
+                answer = "I can't reach the language model right now. Please try again shortly."
 
         new_trace = list(state.trace)
         new_trace.append({
@@ -422,14 +437,15 @@ Answer questions directly, politely, and accurately using your general knowledge
 
     llm = get_llm()
     if llm:
-        system_prompt = f"""You are ThreadAgent, the community assistant at {ws.name}.
+        system_prompt = f"""You are ThreadAgent, the intelligent community assistant at {ws.name}.
 
-Synthesize a clear, helpful, human-readable summary answering the user's query based ONLY on the verified EvidencePack below.
-RULES:
-- Never include raw context update headers like "Context Update from..." or internal debug logs.
-- Never output receipt IDs or confidence percentages in your response.
-- Summarize the relevant facts into a readable, natural narrative in ThreadAgent's voice.
-- Quote specific dates, names, or updates when relevant.
+Synthesize a clear, helpful, human-readable prose response answering the user's query based strictly on the verified EvidencePack below.
+
+CRITICAL INSTRUCTIONS:
+- Do NOT output raw context headers like "Context Update from..." or internal debug logs.
+- Introduce yourself or directly answer the user's question in plain, natural prose.
+- Never output receipt IDs or confidence percentages in your response text.
+- Summarize the relevant facts into a clear narrative in ThreadAgent's voice.
 
 Verified EvidencePack:
 {context_str}
@@ -462,14 +478,17 @@ User Query: {state.query}
 
 def _fallback_synthesis(role_name: str, role_title: str, evidence) -> str:
     if evidence and evidence.citations:
-        sources_summary = "\n".join([
-            f"• {c.title or 'Record'} ({c.source.value.capitalize()}): {c.snippet}"
-            for c in evidence.citations[:3]
-        ])
-        return (
-            f"Based on our community records, here is the relevant context for your query:\n\n"
-            f"{sources_summary}"
-        )
+        cleaned_snippets = []
+        for c in evidence.citations[:3]:
+            snip = c.snippet.strip()
+            if "Context Update from" in snip:
+                lines = [l for l in snip.splitlines() if not l.startswith("**Context Update") and not l.startswith("Based on our verified")]
+                snip = " ".join(lines).strip()
+            if snip:
+                cleaned_snippets.append(snip)
+
+        narrative = "\n\n".join(cleaned_snippets)
+        return narrative if narrative else "No verified details found for this inquiry."
     return "Based on verified organizational records, no matching authorized documentation was found."
 
 

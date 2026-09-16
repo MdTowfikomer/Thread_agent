@@ -48,9 +48,12 @@ class RetrievalService:
         query: str,
         access_context: AccessContext,
         top_k: int = 4,
-        threshold: float = 0.45
+        threshold: float = 0.45,
+        exclude_message_ids: Optional[List[str]] = None
     ) -> EvidencePack:
         org_id = access_context.organization_id
+        exclude_set = set(exclude_message_ids or [])
+        query_norm = query.strip().lower()
 
         # 0. Check for Supabase Hybrid Retrieval (pgvector + FTS + RRF)
         use_supabase = (
@@ -60,7 +63,9 @@ class RetrievalService:
         )
         if use_supabase:
             try:
-                supa_evidence = self._retrieve_supabase(query, access_context, top_k, threshold)
+                supa_evidence = self._retrieve_supabase(
+                    query, access_context, top_k, threshold, exclude_message_ids=exclude_message_ids
+                )
                 if supa_evidence is not None:
                     return supa_evidence
             except Exception:
@@ -68,15 +73,32 @@ class RetrievalService:
 
         all_chunks = self.store.get_chunks_for_organization(org_id)
 
-        
         # 1. Candidate count before ACL
         candidates_before_acl = len(all_chunks)
 
-        # 2. Strict Pre-Retrieval ACL Filtering:
-        # Items outside allowed_scopes NEVER enter the scoring pool
-        allowed_chunks: List[MemoryChunk] = [
-            c for c in all_chunks if c.permission in access_context.allowed_scopes
-        ]
+        # 2. Strict Pre-Retrieval ACL Filtering & Contamination Exclusion
+        allowed_chunks: List[MemoryChunk] = []
+        for c in all_chunks:
+            if c.permission not in access_context.allowed_scopes:
+                continue
+
+            prov = c.provenance or {}
+            msg_id = prov.get("message_id") or prov.get("external_id")
+            if c.id in exclude_set or c.source_record_id in exclude_set or (msg_id and str(msg_id) in exclude_set):
+                continue
+
+            if c.content.strip().lower() == query_norm:
+                continue
+
+            if prov.get("is_bot_mention") is True and not prov.get("is_approved_summary"):
+                continue
+
+            author_lower = (c.author or "").lower()
+            if ("bot" in author_lower or "threadagent" in author_lower) and not prov.get("is_approved_summary"):
+                continue
+
+            allowed_chunks.append(c)
+
         candidates_after_acl = len(allowed_chunks)
 
         # Handle empty authorized candidate space
@@ -134,10 +156,8 @@ class RetrievalService:
         scored_candidates.sort(key=lambda x: x[0], reverse=True)
 
         # 4. Filter by threshold
-        # For an item to qualify as sufficient evidence, it must either:
-        # a) Have meaningful lexical/tag overlap with query terms, OR
-        # b) Have very high semantic confidence (> 0.65)
         stopwords = {"what", "is", "our", "the", "in", "and", "or", "for", "to", "a", "an", "on", "of", "with", "we", "are"}
+        q_words = set(re.findall(r"\b\w+\b", query.lower()))
         significant_q_words = q_words - stopwords
 
         qualifying = []
@@ -182,9 +202,6 @@ class RetrievalService:
         confidence = round(selected_items[0][0], 2) if selected_items else 0.0
         sufficient = len(selected_items) > 0 and has_substantive_match
 
-        # 6. Generate RetrievalReceipt
-        # CRITICAL GUARANTEE: RetrievalReceipt contains ONLY query, allowed_scopes, counts, IDs, scores, and types.
-        # NEVER unauthorized or raw chunk content!
         receipt = RetrievalReceipt(
             query=query,
             organization_id=org_id,
@@ -211,13 +228,17 @@ class RetrievalService:
         query: str,
         access_context: AccessContext,
         top_k: int,
-        threshold: float
+        threshold: float,
+        exclude_message_ids: Optional[List[str]] = None
     ) -> Optional[EvidencePack]:
         """
         Supabase pgvector + tsvector Reciprocal Rank Fusion (RRF) retrieval.
         Strict pre-retrieval ACL filtering is executed directly in PostgreSQL.
         """
         org_id = access_context.organization_id
+        exclude_set = set(exclude_message_ids or [])
+        query_norm = query.strip().lower()
+
         candidates_before, candidates_after = self.supabase_store.get_candidate_counts(
             org_id, access_context.allowed_scopes
         )
@@ -255,8 +276,6 @@ class RetrievalService:
         if not hybrid_results:
             return None
 
-        # Filter candidates using the same substantive evidence criteria as deterministic pipeline
-        # (preventing bluffing on low-confidence random vector matches)
         q_words = set(re.findall(r"\b\w+\b", query.lower()))
         stopwords = {"what", "is", "our", "the", "in", "and", "or", "for", "to", "a", "an", "on", "of", "with", "we", "are"}
         significant_q_words = q_words - stopwords
@@ -265,6 +284,20 @@ class RetrievalService:
         has_substantive_match = False
 
         for combined_score, chunk, sim, fts_rank, d_rank, l_rank in hybrid_results:
+            prov = chunk.provenance or {}
+            msg_id = prov.get("message_id") or prov.get("external_id")
+            if chunk.id in exclude_set or chunk.source_record_id in exclude_set or (msg_id and str(msg_id) in exclude_set):
+                continue
+
+            if chunk.content.strip().lower() == query_norm:
+                continue
+
+            if prov.get("is_bot_mention") is True and not prov.get("is_approved_summary"):
+                continue
+
+            author_lower = (chunk.author or "").lower()
+            if ("bot" in author_lower or "threadagent" in author_lower) and not prov.get("is_approved_summary"):
+                continue
             c_words = set(re.findall(r"\b\w+\b", chunk.content.lower()))
             tag_words = set(re.findall(r"\b\w+\b", " ".join(chunk.tags).lower()))
             title_words = set(re.findall(r"\b\w+\b", (chunk.title or "").lower()))

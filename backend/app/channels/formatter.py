@@ -37,20 +37,19 @@ def convert_markdown_to_telegram_html(text: str) -> str:
 
     cleaned = clean_debug_headers_and_footers(text)
 
-    # Escape HTML special characters first, but preserve intended markup
-    # Replace code blocks first to protect internal formatting
+    # Protect code blocks first using alphanumeric placeholders without underscores or asterisks
     code_blocks = []
     def save_code_block(match):
         code_blocks.append(match.group(1))
-        return f"___CODE_BLOCK_{len(code_blocks)-1}___"
+        return f"XCODEBLOCKX{len(code_blocks)-1}X"
 
     cleaned = re.sub(r"```(?:\w+)?\n?(.*?)```", save_code_block, cleaned, flags=re.DOTALL)
 
-    # Replace inline code
+    # Protect inline code using alphanumeric placeholders
     inline_codes = []
     def save_inline_code(match):
         inline_codes.append(match.group(1))
-        return f"___INLINE_CODE_{len(inline_codes)-1}___"
+        return f"XINLINECODEX{len(inline_codes)-1}X"
 
     cleaned = re.sub(r"`([^`]+)`", save_inline_code, cleaned)
 
@@ -67,12 +66,17 @@ def convert_markdown_to_telegram_html(text: str) -> str:
     # Restore inline code as <code>
     for i, code in enumerate(inline_codes):
         safe_code = code.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        cleaned = cleaned.replace(f"___INLINE_CODE_{i}___", f"<code>{safe_code}</code>")
+        cleaned = cleaned.replace(f"XINLINECODEX{i}X", f"<code>{safe_code}</code>")
 
     # Restore code blocks as <pre>
     for i, code in enumerate(code_blocks):
         safe_code = code.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        cleaned = cleaned.replace(f"___CODE_BLOCK_{i}___", f"<pre>{safe_code}</pre>")
+        cleaned = cleaned.replace(f"XCODEBLOCKX{i}X", f"<pre>{safe_code}</pre>")
+
+    # Safety sweep: remove any un-replaced placeholder artifacts if present
+    cleaned = re.sub(r"XINLINECODEX\d+X", "", cleaned)
+    cleaned = re.sub(r"XCODEBLOCKX\d+X", "", cleaned)
+    cleaned = re.sub(r"___INLINE_CODE_\d+___", "", cleaned)
 
     return cleaned.strip()
 
@@ -90,18 +94,18 @@ def convert_markdown_to_slack_mrkdwn(text: str) -> str:
 
     cleaned = clean_debug_headers_and_footers(text)
 
-    # Preserve code blocks and inline code
+    # Protect code blocks and inline code
     code_blocks = []
     def save_code_block(match):
         code_blocks.append(match.group(0))
-        return f"___CODE_BLOCK_{len(code_blocks)-1}___"
+        return f"XCODEBLOCKX{len(code_blocks)-1}X"
 
     cleaned = re.sub(r"```(?:\w+)?\n?(.*?)```", save_code_block, cleaned, flags=re.DOTALL)
 
     inline_codes = []
     def save_inline_code(match):
         inline_codes.append(match.group(0))
-        return f"___INLINE_CODE_{len(inline_codes)-1}___"
+        return f"XINLINECODEX{len(inline_codes)-1}X"
 
     cleaned = re.sub(r"`([^`]+)`", save_inline_code, cleaned)
 
@@ -110,10 +114,15 @@ def convert_markdown_to_slack_mrkdwn(text: str) -> str:
 
     # Restore code blocks and inline code
     for i, code in enumerate(inline_codes):
-        cleaned = cleaned.replace(f"___INLINE_CODE_{i}___", code)
+        cleaned = cleaned.replace(f"XINLINECODEX{i}X", code)
 
     for i, code in enumerate(code_blocks):
-        cleaned = cleaned.replace(f"___CODE_BLOCK_{i}___", code)
+        cleaned = cleaned.replace(f"XCODEBLOCKX{i}X", code)
+
+    # Safety sweep
+    cleaned = re.sub(r"XINLINECODEX\d+X", "", cleaned)
+    cleaned = re.sub(r"XCODEBLOCKX\d+X", "", cleaned)
+    cleaned = re.sub(r"___INLINE_CODE_\d+___", "", cleaned)
 
     return cleaned.strip()
 
@@ -131,4 +140,9 @@ def format_response_for_platform(text: str, platform: ChannelType) -> str:
     elif platform == ChannelType.SLACK:
         return convert_markdown_to_slack_mrkdwn(text)
     else: # Discord or default
-        return clean_debug_headers_and_footers(text)
+        cleaned = clean_debug_headers_and_footers(text)
+        # Safety sweep for Discord too
+        cleaned = re.sub(r"XINLINECODEX\d+X", "", cleaned)
+        cleaned = re.sub(r"XCODEBLOCKX\d+X", "", cleaned)
+        cleaned = re.sub(r"___INLINE_CODE_\d+___", "", cleaned)
+        return cleaned.strip()

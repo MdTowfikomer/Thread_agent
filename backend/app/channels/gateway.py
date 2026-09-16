@@ -273,7 +273,10 @@ class DiscordGatewayBot:
         inbound_agent_query_service.mark_agent_message(str(message.id))
 
         import re
-        clean_query = re.sub(rf"<@!?{re.escape(str(bot_user.id))}>", "", message.content).strip()
+        clean_query = re.sub(rf"<@!?&?{re.escape(str(bot_user.id))}>", "", message.content)
+        clean_query = re.sub(r"@\w*thread\w*bot\b", "", clean_query, flags=re.IGNORECASE)
+        clean_query = re.sub(r"@ThreadAgent\b", "", clean_query, flags=re.IGNORECASE)
+        clean_query = re.sub(r"@Thread\b", "", clean_query, flags=re.IGNORECASE).strip()
         if not clean_query:
             await message.reply("Hello! Ask me any question about GDG MCET records and I'll find grounded evidence.", mention_author=False)
             return
@@ -545,8 +548,7 @@ class DiscordGatewayBot:
     def create_client(self) -> DiscordThreadClient:
         """Instantiate configured discord.py client with required intents."""
         intents = discord.Intents.default()
-        if os.getenv("DISCORD_ENABLE_MESSAGE_CONTENT_INTENT", "false").lower() in ("true", "1"):
-            intents.message_content = True
+        intents.message_content = True
         intents.guilds = True
         intents.messages = True
         return DiscordThreadClient(bot_service=self, intents=intents)

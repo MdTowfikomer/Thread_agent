@@ -27,6 +27,13 @@ class OutboundTimeoutError(OutboundProviderError):
     pass
 
 
+class OutboundRateLimitError(OutboundProviderError):
+    """Raised when an outbound provider responds with HTTP 429 rate limit."""
+    def __init__(self, message: str, retry_after: Optional[float] = None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
 class OutboundAdapter(Protocol):
     def send(self, destination: Dict[str, str], text: str, idempotency_key: str) -> str:
         ...
@@ -37,7 +44,30 @@ def _provider_post(url: str, headers: Dict[str, str], payload: Dict[str, Any]) -
     for attempt in range(3):
         try:
             response = httpx.post(url, headers=headers, json=payload, timeout=20)
-            if response.status_code in (429, 500, 502, 503, 504):
+            if response.status_code == 429:
+                ra_val = response.headers.get("Retry-After") or response.headers.get("retry-after")
+                retry_after = None
+                if ra_val is not None:
+                    try:
+                        retry_after = float(ra_val)
+                    except (ValueError, TypeError):
+                        pass
+                if retry_after is None:
+                    try:
+                        body_json = response.json()
+                        if isinstance(body_json, dict) and "retry_after" in body_json:
+                            retry_after = float(body_json["retry_after"])
+                    except Exception:
+                        pass
+
+                last_error = f"provider 429 rate limited (retry_after={retry_after})"
+                if attempt < 1:  # retry once respecting Retry-After
+                    sleep_time = (retry_after if retry_after is not None and retry_after > 0 else 1.0)
+                    time.sleep(sleep_time)
+                    continue
+                raise OutboundRateLimitError(last_error, retry_after=retry_after)
+
+            if response.status_code in (500, 502, 503, 504):
                 last_error = f"provider status {response.status_code}"
                 if attempt < 2:
                     time.sleep(0.25 * (attempt + 1))
@@ -51,6 +81,8 @@ def _provider_post(url: str, headers: Dict[str, str], payload: Dict[str, Any]) -
             # Ambiguous timeout: provider may have received and posted the message.
             # Do NOT blindly retry!
             raise OutboundTimeoutError(f"Provider request timed out ambiguously: {exc}") from exc
+        except OutboundRateLimitError:
+            raise
         except httpx.NetworkError as exc:
             last_error = str(exc)
             if attempt < 2:

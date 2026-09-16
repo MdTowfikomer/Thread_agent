@@ -5,6 +5,13 @@ from langgraph.graph import StateGraph, END
 from app.graph.state import GraphState
 from app.core.organizations import get_workspace, get_role_agent
 from app.core.config import settings
+from app.core.canonical import (
+    Citation,
+    EvidencePack,
+    PermissionLevel,
+    RetrievalReceipt,
+    SourceType,
+)
 from app.memory.retrieval import retrieval_service, derive_access_context
 
 from app.tools.events import event_assistant
@@ -357,6 +364,7 @@ def synthesis_node(state: GraphState) -> Dict[str, Any]:
     # 1. TOOL EXECUTION BRANCH
     if state.intent_category == "TOOL_EXECUTION":
         final_answer = ""
+        tool_evidence = None
         tool = state.tool_name or ""
         if tool == "events":
             events = event_assistant.list_upcoming_events(state.organization_id)
@@ -382,7 +390,69 @@ def synthesis_node(state: GraphState) -> Dict[str, Any]:
         elif tool == "github":
             repo = github_helper.get_bound_repository(state.organization_id)
             query_str = state.query or state.tool_args or ""
-            final_answer = github_helper.format_github_response(repo, query=query_str, org_id=state.organization_id)
+            repo_name = repo.get("repository_name")
+            is_commit_query = any(word in query_str.lower() for word in ("commit", "commits", "history", "latest", "recent"))
+            commits = None
+            if repo_name and repo.get("is_active") and is_commit_query:
+                commits = github_helper.get_recent_commits(
+                    org_id=state.organization_id,
+                    count=github_helper.requested_commit_count(query_str),
+                )
+            final_answer = github_helper.format_github_response(
+                repo,
+                query=query_str,
+                org_id=state.organization_id,
+                commits=commits,
+            )
+
+            citations = []
+            if repo_name and repo.get("is_active"):
+                if commits:
+                    citations = [
+                        Citation(
+                            item_id=f"github_commit:{commit['sha']}",
+                            source=SourceType.GITHUB,
+                            author=commit.get("author") or "GitHub",
+                            title=f"Commit {commit['sha']}",
+                            snippet=commit.get("message") or "GitHub commit",
+                            permission=PermissionLevel.PUBLIC_COMMUNITY,
+                            source_uri=commit.get("url"),
+                            relevance_score=1.0,
+                        )
+                        for commit in commits
+                    ]
+                elif not is_commit_query:
+                    citations = [Citation(
+                        item_id=f"github_repository:{repo_name}",
+                        source=SourceType.GITHUB,
+                        author="GitHub",
+                        title=repo_name,
+                        snippet="Authoritatively bound community repository.",
+                        permission=PermissionLevel.PUBLIC_COMMUNITY,
+                        source_uri=repo.get("url"),
+                        relevance_score=1.0,
+                    )]
+
+            if citations:
+                tool_evidence = EvidencePack(
+                    query=query_str,
+                    organization_id=state.organization_id,
+                    citations=citations,
+                    receipt=RetrievalReceipt(
+                        query=query_str,
+                        organization_id=state.organization_id,
+                        allowed_scopes=state.access_context.allowed_scopes if state.access_context else [PermissionLevel.PUBLIC_COMMUNITY],
+                        candidates_before_acl=len(citations),
+                        candidates_after_acl=len(citations),
+                        selected_item_ids=[citation.item_id for citation in citations],
+                        scores={citation.item_id: citation.relevance_score for citation in citations},
+                        source_types=[SourceType.GITHUB],
+                        retrieval_strategy="authoritative_github_tool",
+                        retrieval_mode="live_tool",
+                    ),
+                    sufficient_evidence=True,
+                    confidence_score=1.0,
+                )
         elif tool == "link":
             arg = (state.tool_args or "").strip()
             parts = (state.session_key or "").split(":")
@@ -426,6 +496,7 @@ def synthesis_node(state: GraphState) -> Dict[str, Any]:
         })
         return {
             "final_answer": final_answer,
+            "evidence_pack": tool_evidence,
             "trace": new_trace
         }
 

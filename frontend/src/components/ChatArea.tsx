@@ -33,6 +33,33 @@ function getQueryProgressMessage(query: string): string {
   return 'Checking the available community context.';
 }
 
+function renderInlineMarkdown(value: string): React.ReactNode[] {
+  const tokenPattern = /(\[[^\]]+\]\(https?:\/\/[^\s)]+\)|`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*)/g;
+  return value.split(tokenPattern).filter(Boolean).map((token, index) => {
+    const link = token.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/);
+    if (link) {
+      return <a key={index} href={link[2]} target="_blank" rel="noreferrer" className="text-neutral-100 underline decoration-neutral-600 underline-offset-4 transition-colors hover:decoration-neutral-100">{link[1]}</a>;
+    }
+    if (token.startsWith("**") && token.endsWith("**")) return <strong key={index} className="font-medium text-white">{token.slice(2, -2)}</strong>;
+    if (token.startsWith("`") && token.endsWith("`")) return <code key={index} className="bg-neutral-900 px-1.5 py-0.5 font-mono text-[0.9em] text-neutral-200">{token.slice(1, -1)}</code>;
+    if (token.startsWith("*") && token.endsWith("*")) return <em key={index}>{token.slice(1, -1)}</em>;
+    return <React.Fragment key={index}>{token}</React.Fragment>;
+  });
+}
+
+const MarkdownMessage: React.FC<{ content: string }> = ({ content }) => (
+  <div className="space-y-1">
+    {content.split('\n').map((line, index) => {
+      if (!line) return <div key={index} className="h-3" />;
+      const numbered = line.match(/^(\d+)\.\s+(.*)$/);
+      if (numbered) return <p key={index} className="pl-5 -indent-5">{numbered[1]}. {renderInlineMarkdown(numbered[2])}</p>;
+      const heading = line.match(/^#{1,3}\s+(.*)$/);
+      if (heading) return <p key={index} className="pt-2 font-medium text-white">{renderInlineMarkdown(heading[1])}</p>;
+      return <p key={index}>{renderInlineMarkdown(line)}</p>;
+    })}
+  </div>
+);
+
 export const ChatArea: React.FC<ChatAreaProps> = ({
   workspaceName,
   onSelectPromptQuery,
@@ -173,8 +200,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                         <span>{message.role === 'user' ? 'You' : 'ThreadAgent'}</span>
                         <span>{message.timestamp}</span>
                       </div>
-                      <div className={`mt-3 whitespace-pre-line text-base leading-7 ${message.role === 'user' ? 'border-l border-neutral-700 pl-4 text-neutral-300' : message.isPending ? 'text-neutral-400' : 'text-neutral-100'}`}>
-                        {message.content}
+                      <div className={`mt-3 text-base leading-7 ${message.role === 'user' ? 'border-l border-neutral-700 pl-4 text-neutral-300' : message.isPending ? 'text-neutral-400' : 'text-neutral-100'}`}>
+                        <MarkdownMessage content={message.content} />
                       </div>
                       {message.isPending && <p className="mt-3 text-xs text-neutral-600">This may take a moment for longer answers.</p>}
                       {message.role === 'assistant' && message.citations && message.citations.length > 0 && (

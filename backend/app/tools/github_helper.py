@@ -129,7 +129,30 @@ class GitHubHelper:
             logger.warning(f"Failed to fetch GitHub commits for {repo_name}: {e}")
             return None
 
-    def format_github_response(self, repo_info: Dict[str, Any], query: str = "", org_id: str = "gdg_mcet") -> str:
+    def requested_commit_count(self, query: str = "") -> int:
+        """Return the bounded commit count requested by a repository query."""
+        q_lower = (query or "").lower()
+        count = 5
+        import re
+        num_match = re.search(r"\b(\d+)\b", q_lower)
+        if "latest" in q_lower or "last commit" in q_lower or "1 commit" in q_lower or "one commit" in q_lower:
+            if not num_match or num_match.group(1) == "1":
+                count = 1
+            elif num_match:
+                count = int(num_match.group(1))
+        elif "five" in q_lower or "last 5" in q_lower or "5 commits" in q_lower:
+            count = 5
+        elif num_match:
+            count = int(num_match.group(1))
+        return max(1, min(count, 20))
+
+    def format_github_response(
+        self,
+        repo_info: Dict[str, Any],
+        query: str = "",
+        org_id: str = "gdg_mcet",
+        commits: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
         """Format GitHub repository status or commit history response."""
         repo_name = repo_info.get("repository_name")
         if not repo_name or not repo_info.get("is_active"):
@@ -139,21 +162,9 @@ class GitHubHelper:
         is_commit_query = any(k in q_lower for k in ("commit", "commits", "history", "latest", "recent"))
 
         if is_commit_query:
-            count = 5
-            import re
-            num_match = re.search(r"\b(\d+)\b", q_lower)
-            if "latest" in q_lower or "last commit" in q_lower or "1 commit" in q_lower or "one commit" in q_lower:
-                if not num_match or num_match.group(1) == "1":
-                    count = 1
-                elif num_match:
-                    count = int(num_match.group(1))
-            elif "five" in q_lower or "last 5" in q_lower or "5 commits" in q_lower:
-                count = 5
-            elif num_match:
-                count = int(num_match.group(1))
-
-            count = max(1, min(count, 20))
-            commits = self.get_recent_commits(org_id=org_id, count=count)
+            count = self.requested_commit_count(query)
+            if commits is None:
+                commits = self.get_recent_commits(org_id=org_id, count=count)
 
             if commits is None:
                 return "GitHub connection is currently unavailable. Unable to fetch repository commits."
@@ -191,4 +202,3 @@ class GitHubHelper:
 
 
 github_helper = GitHubHelper()
-

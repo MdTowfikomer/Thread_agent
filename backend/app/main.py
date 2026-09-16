@@ -49,17 +49,30 @@ async def lifespan(app: FastAPI):
             raise RuntimeError(
                 f"Configuration Error: render_free_demo requires exactly 1 worker (WEB_CONCURRENCY=1), but found {web_concurrency}."
             )
-        db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
-        if db_url:
-            gateway_lock_conn = try_acquire_gateway_advisory_lock(fail_on_db_error=False)
+        if settings.is_render_free_demo:
+            # 1. Keep exactly one gateway leader via PostgreSQL advisory lock.
+            # Fail closed when the lock database check itself errors.
+            # A held lock is standby; a DB error is not standby.
+            gateway_lock_conn = try_acquire_gateway_advisory_lock(fail_on_db_error=True)
             if gateway_lock_conn:
                 print("[Discord Gateway] Acquired advisory lock. Launching background Gateway worker (render_free_demo leader)...")
                 discord_gateway_bot.start_background()
             else:
                 print("[Discord Gateway] Verified active peer holds advisory lock. Running API in standby for Discord Gateway.")
+                discord_gateway_bot.set_standby()
         else:
-            print("[Discord Gateway] Launching background Gateway worker (single-worker mode)...")
-            discord_gateway_bot.start_background()
+            db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+            if db_url:
+                gateway_lock_conn = try_acquire_gateway_advisory_lock(fail_on_db_error=False)
+                if gateway_lock_conn:
+                    print("[Discord Gateway] Acquired advisory lock. Launching background Gateway worker...")
+                    discord_gateway_bot.start_background()
+                else:
+                    print("[Discord Gateway] Verified active peer holds advisory lock. Running API in standby.")
+                    discord_gateway_bot.set_standby()
+            else:
+                print("[Discord Gateway] Launching background Gateway worker (single-worker mode)...")
+                discord_gateway_bot.start_background()
 
     yield
 
@@ -97,6 +110,22 @@ app.include_router(delivery_router, prefix=settings.API_PREFIX)
 def health_check():
     """Minimal liveness health probe. Zero information disclosure in production."""
     return {"status": "healthy"}
+
+@app.get("/gateway/readiness")
+@app.get(f"{settings.API_PREFIX}/gateway/readiness")
+@app.get(f"{settings.API_PREFIX}/channels/discord/readiness")
+def get_gateway_readiness(
+    principal: AuthenticatedPrincipal = Depends(get_current_principal)
+):
+    """
+    Operator-only readiness signal for Discord Gateway.
+    Zero token, guild, exception body, or internals leakage.
+    """
+    if principal.is_guest:
+        raise HTTPException(status_code=401, detail="Guests are not permitted access to operator endpoints.")
+    if PermissionLevel.INTERNAL_CORE not in principal.access_context.allowed_scopes:
+        raise HTTPException(status_code=403, detail="Operator access is required for gateway readiness.")
+    return discord_gateway_bot.get_readiness_signal()
 
 @app.get(f"{settings.API_PREFIX}/workspace")
 def get_current_workspace(organization_id: str = "gdg_mcet"):

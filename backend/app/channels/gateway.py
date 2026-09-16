@@ -2,8 +2,9 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime, timezone
-from typing import Optional, Dict, Any, Tuple, List
+import random
+from datetime import datetime, timezone, timedelta
+from typing import Optional, Dict, Any, Tuple, List, Callable, Coroutine
 
 import discord
 
@@ -23,6 +24,47 @@ from app.memory.repository import memory_repository, MemoryRepository
 
 logger = logging.getLogger(__name__)
 
+
+def extract_error_details(exc: Exception) -> Dict[str, Any]:
+    """
+    Safely extract structured error details for logging and retry decisions.
+    Guarantees:
+      - HTTP 429 and Cloudflare 1015 are detected distinctly.
+      - Safe structured fields only.
+      - NEVER exposes or logs token strings or raw HTML error bodies.
+    """
+    status = getattr(exc, "status", None)
+    code = getattr(exc, "code", None)
+
+    # Extract CF-RAY if present in response headers
+    cf_ray = None
+    response = getattr(exc, "response", None)
+    if response is not None and hasattr(response, "headers") and response.headers:
+        cf_ray = response.headers.get("CF-RAY") or response.headers.get("cf-ray")
+    if not cf_ray:
+        cf_ray = getattr(exc, "cf_ray", None)
+
+    is_429 = (status == 429)
+
+    # Detect Cloudflare 1015 distinctly
+    is_cf_1015 = False
+    if code == 1015:
+        is_cf_1015 = True
+    else:
+        # Check safely without exposing raw HTML body
+        text_preview = f"{getattr(exc, 'text', '')} {str(exc)}"
+        if "1015" in text_preview or (status in (403, 429, 503) and cf_ray and "rate limit" in text_preview.lower()):
+            is_cf_1015 = True
+
+    return {
+        "exception_class": type(exc).__name__,
+        "http_status": status,
+        "cf_ray": cf_ray,
+        "is_429": is_429,
+        "is_cf_1015": is_cf_1015,
+    }
+
+
 class DiscordThreadClient(discord.Client):
     """
     Robust Discord client powered by discord.py.
@@ -30,14 +72,21 @@ class DiscordThreadClient(discord.Client):
     reconnects, resume sessions, and intents natively.
     """
     def __init__(self, bot_service: "DiscordGatewayBot", *args, **kwargs):
+        if "intents" not in kwargs and not args:
+            kwargs["intents"] = discord.Intents.default()
         super().__init__(*args, **kwargs)
         self.bot_service = bot_service
 
     async def on_ready(self):
-        logger.info(f"Discord Gateway Bot logged in as {self.user} (ID: {self.user.id})")
+        user_str = str(self.user) if self.user else "unknown"
+        user_id = self.user.id if self.user else "unknown"
+        logger.info(f"[Discord Gateway] Logged in as {user_str} (ID: {user_id})")
+        await self.bot_service.on_client_ready()
 
     async def on_message(self, message: discord.Message):
-        self.bot_service.handle_discord_message(message)
+        # 1. Dispatch live-message ingestion as bounded background work (non-blocking)
+        self.bot_service.dispatch_background_ingestion(message)
+        # 2. Immediately await mention reply flow without blocking on ingestion
         await self.bot_service.handle_discord_mention_reply(message, self)
 
 class DiscordGatewayBot:
@@ -45,19 +94,26 @@ class DiscordGatewayBot:
     Authenticated Discord Gateway Bot using DISCORD_BOT_TOKEN and Message Content Intent.
     Ingests live MESSAGE_CREATE channel events from Discord infrastructure into Thread Core Memory.
 
-    SECURITY GUARANTEES:
+    SECURITY & RESILIENCE GUARANTEES:
     1. Authenticates against Discord Gateway using official discord.py client with full session resilience.
-    2. Resolves organization_id authoritatively from server-owned GuildInstallationStore.
-       Unknown or unmapped guilds are immediately dropped.
-    3. Ignores bot messages to prevent echo loops.
-    4. Routes verified live events into trusted_discord_connector_service with IngestionTrustMode.VERIFIED_CONNECTOR.
+    2. Gateway supervisor wraps client startup with exponential backoff & full jitter (initial 60s, cap 15m).
+    3. Detects HTTP 429 and Cloudflare 1015 distinctly with safe structured logging (zero token/HTML leakage).
+    4. Resolves organization_id authoritatively from server-owned GuildInstallationStore.
+    5. Ignores bot messages to prevent echo loops.
+    6. Decouples ingestion to bounded asyncio.to_thread workers without delaying mention replies.
+    7. Single active client guaranteed; resets retry counter only after on_ready.
     """
     def __init__(
         self,
         installation_store: Optional[GuildInstallationStore] = None,
         connector_service: Optional[_TrustedDiscordConnectorService] = None,
         mem_store: Optional[MemoryStore] = None,
-        mem_repo: Optional[MemoryRepository] = None
+        mem_repo: Optional[MemoryRepository] = None,
+        initial_backoff: float = 60.0,
+        max_backoff: float = 900.0,
+        max_concurrent_ingestions: int = 10,
+        jitter_fn: Optional[Callable[[float, float], float]] = None,
+        sleep_fn: Optional[Callable[[float], Coroutine]] = None,
     ):
         self.installation_store = installation_store or guild_installation_store
         self.connector_service = connector_service or trusted_discord_connector_service
@@ -66,6 +122,19 @@ class DiscordGatewayBot:
         self._running = False
         self._client: Optional[DiscordThreadClient] = None
         self._task: Optional[asyncio.Task] = None
+
+        # Production resilience supervisor state
+        self.state: str = "stopped"  # "stopped", "starting", "connected", "backing_off", "standby"
+        self.retry_count: int = 0
+        self.last_ready_at: Optional[datetime] = None
+        self.next_retry_at: Optional[datetime] = None
+        self.initial_backoff: float = initial_backoff
+        self.max_backoff: float = max_backoff
+        self.max_concurrent_ingestions: int = max_concurrent_ingestions
+        self._jitter_fn: Callable[[float, float], float] = jitter_fn or random.uniform
+        self._sleep_fn: Callable[[float], Coroutine] = sleep_fn or asyncio.sleep
+        self._ingestion_semaphore: Optional[asyncio.Semaphore] = None
+        self._background_tasks: set = set()
 
     def handle_discord_message(
         self,
@@ -150,8 +219,8 @@ class DiscordGatewayBot:
                 from app.core.canonical import PermissionLevel
 
                 author_id = str(message.author.id)
-                author_name = message.author.name
-                display_name = getattr(message.author, "display_name", author_name)
+                author_name = str(getattr(message.author, "name", None) or "Discord User")
+                display_name = str(getattr(message.author, "display_name", None) or author_name)
 
                 link = identity_service.resolve_identity(
                     organization_id=org_id,
@@ -204,7 +273,7 @@ class DiscordGatewayBot:
                     mention_author=False
                 )
             except Exception as exc:
-                logger.error(f"Error handling Discord mention for message {message.id}: {exc}")
+                logger.error(f"Error handling Discord mention for message {message.id}: {exc}", exc_info=True)
                 await message.reply(
                     "Sorry, I encountered an error retrieving verified records. Please try again.",
                     mention_author=False
@@ -275,6 +344,83 @@ class DiscordGatewayBot:
 
         return record, chunks, receipt
 
+    @property
+    def ingestion_semaphore(self) -> asyncio.Semaphore:
+        if self._ingestion_semaphore is None:
+            self._ingestion_semaphore = asyncio.Semaphore(self.max_concurrent_ingestions)
+        return self._ingestion_semaphore
+
+    async def _bounded_ingest(self, message: discord.Message):
+        async with self.ingestion_semaphore:
+            await asyncio.to_thread(self.handle_discord_message, message)
+
+    def dispatch_background_ingestion(self, message: discord.Message) -> asyncio.Task:
+        task = asyncio.create_task(self._bounded_ingest(message))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._on_ingestion_task_done)
+        return task
+
+    def _on_ingestion_task_done(self, task: asyncio.Task):
+        self._background_tasks.discard(task)
+        try:
+            if not task.cancelled():
+                exc = task.exception()
+                if exc:
+                    logger.error(
+                        f"[Discord Gateway] Live message background ingestion failed: {type(exc).__name__}"
+                    )
+        except Exception as e:
+            logger.error(f"[Discord Gateway] Error checking ingestion task status: {type(e).__name__}")
+
+    async def on_client_ready(self):
+        """Reset retry counter and update readiness state when discord.py client reports on_ready."""
+        self.state = "connected"
+        self.retry_count = 0
+        self.last_ready_at = datetime.now(timezone.utc)
+        self.next_retry_at = None
+        logger.info("[Discord Gateway Supervisor] Gateway client ready. Retry counter reset to 0.")
+
+    def set_standby(self):
+        """Put the gateway bot in standby mode when advisory lock is held by another active peer."""
+        self.state = "standby"
+        self._running = False
+
+    def get_readiness_signal(self) -> Dict[str, Any]:
+        """
+        Operator-only readiness signal reporting supervisor state and timestamps.
+        Guarantees zero token, guild, exception body, or internals leakage.
+        """
+        return {
+            "state": self.state,
+            "last_ready_at": self.last_ready_at.isoformat() if self.last_ready_at else None,
+            "next_retry_at": self.next_retry_at.isoformat() if self.next_retry_at else None,
+        }
+
+    def calculate_backoff(self, attempt: int) -> float:
+        """
+        Calculate exponential backoff with full jitter.
+        Formula: delay = jitter(0, min(max_backoff, initial_backoff * 2^(attempt - 1)))
+        """
+        if attempt < 1:
+            attempt = 1
+        ceiling = min(self.max_backoff, self.initial_backoff * (2.0 ** (attempt - 1)))
+        delay = self._jitter_fn(0.0, ceiling)
+        return max(0.01, delay)
+
+    async def _cleanup_client(self):
+        """Clean up existing discord.py client instance to prevent concurrent clients."""
+        if self._client:
+            try:
+                closed = self._client.is_closed()
+                if asyncio.iscoroutine(closed):
+                    closed = await closed
+                if not closed:
+                    await self._client.close()
+            except Exception as e:
+                logger.debug(f"[Discord Gateway] Error closing prior client: {e}")
+            finally:
+                self._client = None
+
     def create_client(self) -> DiscordThreadClient:
         """Instantiate configured discord.py client with required intents."""
         intents = discord.Intents.default()
@@ -285,39 +431,110 @@ class DiscordGatewayBot:
         return DiscordThreadClient(bot_service=self, intents=intents)
 
     async def start(self):
-        """Start the live Discord gateway client with discord.py."""
+        """
+        Start the live Discord gateway client with discord.py under supervisor protection.
+        Retries unexpected connection/start failures with exponential backoff and full jitter.
+        """
         token = settings.discord_bot_token
         if not token:
-            logger.warning("DiscordGatewayBot cannot start: DISCORD_BOT_TOKEN is not configured.")
+            logger.warning("[Discord Gateway Supervisor] DISCORD_BOT_TOKEN is not configured. Gateway bot cannot start.")
+            self.state = "stopped"
             return
 
         self._running = True
-        self._client = self.create_client()
-        try:
-            await self._client.start(token)
-        except asyncio.CancelledError:
-            await self.stop()
-        except Exception as e:
-            logger.error(f"Discord Gateway client error: {e}")
-            self._running = False
+        self.state = "starting"
+
+        while self._running:
+            await self._cleanup_client()
+            self._client = self.create_client()
+
+            try:
+                self.state = "starting"
+                await self._client.start(token)
+                # If client.start() exits cleanly without exception (e.g. stop() called)
+                break
+            except asyncio.CancelledError:
+                logger.info("[Discord Gateway Supervisor] Supervisor task cancelled. Stopping.")
+                self._running = False
+                await self._cleanup_client()
+                self.state = "stopped"
+                raise
+            except (discord.errors.LoginFailure, discord.errors.PrivilegedIntentsRequired) as fatal_exc:
+                self._running = False
+                self.state = "stopped"
+                err_details = extract_error_details(fatal_exc)
+                logger.error(
+                    f"[Discord Gateway Supervisor] Fatal client error (non-retryable): "
+                    f"exception_class={err_details['exception_class']} "
+                    f"http_status={err_details['http_status']}"
+                )
+                await self._cleanup_client()
+                break
+            except Exception as exc:
+                if not self._running:
+                    break
+
+                self.retry_count += 1
+                err_details = extract_error_details(exc)
+                delay = self.calculate_backoff(self.retry_count)
+
+                self.state = "backing_off"
+                self.next_retry_at = datetime.now(timezone.utc) + timedelta(seconds=delay)
+
+                # Safe structured logging ONLY: attempt, delay_seconds, exception class, HTTP status, and Cloudflare-Ray
+                # NEVER log token or HTML body!
+                logger.warning(
+                    f"[Discord Gateway Supervisor] Connection failure: "
+                    f"attempt={self.retry_count} "
+                    f"delay_seconds={delay:.2f} "
+                    f"exception_class={err_details['exception_class']} "
+                    f"http_status={err_details['http_status']} "
+                    f"cf_ray={err_details['cf_ray']} "
+                    f"is_429={err_details['is_429']} "
+                    f"is_cf_1015={err_details['is_cf_1015']}"
+                )
+
+                await self._cleanup_client()
+
+                try:
+                    await self._sleep_fn(delay)
+                except asyncio.CancelledError:
+                    self._running = False
+                    self.state = "stopped"
+                    raise
 
     def start_background(self):
-        """Start Gateway connection in background asyncio task for local single-process demo."""
+        """Start Gateway connection in background asyncio task if not already running."""
         token = settings.discord_bot_token
-        if token and not self._running:
-            try:
-                loop = asyncio.get_running_loop()
-                self._task = loop.create_task(self.start())
-            except RuntimeError:
-                pass
+        if not token:
+            return
+        if self._task and not self._task.done():
+            logger.warning("[Discord Gateway Supervisor] Supervisor task already running. Skipping duplicate start.")
+            return
+
+        self._running = True
+        self.state = "starting"
+        try:
+            loop = asyncio.get_running_loop()
+            self._task = loop.create_task(self.start())
+        except RuntimeError:
+            pass
 
     async def stop(self):
-        """Gracefully stop discord.py client connection."""
+        """Gracefully stop discord.py client and supervisor."""
         self._running = False
-        if self._client and not self._client.is_closed():
-            await self._client.close()
+        self.state = "stopped"
+        await self._cleanup_client()
         if self._task and not self._task.done():
             self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+        for t in list(self._background_tasks):
+            if not t.done():
+                t.cancel()
+        self._background_tasks.clear()
 
 discord_gateway_bot = DiscordGatewayBot()
 

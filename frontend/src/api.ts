@@ -12,15 +12,12 @@ export class ApiError extends Error {
 }
 
 export function getAuthToken(): string | null {
-  return localStorage.getItem('thread_token') || sessionStorage.getItem('thread_token');
+  // Production auth boundary: browser storage must not accept or store pasted JWTs
+  return null;
 }
 
-export function setAuthToken(token: string, remember: boolean = true) {
-  if (remember) {
-    localStorage.setItem('thread_token', token);
-  } else {
-    sessionStorage.setItem('thread_token', token);
-  }
+export function setAuthToken(_token: string, _remember: boolean = true) {
+  // Production auth boundary: no-op, pasted JWTs are not accepted or stored in browser storage
 }
 
 export function clearAuthToken() {
@@ -29,8 +26,32 @@ export function clearAuthToken() {
 }
 
 export function getAuthHeaders(): Record<string, string> {
-  const token = getAuthToken();
-  return token ? { 'Authorization': `Bearer ${token}` } : {};
+  return {};
+}
+
+export interface SessionInfo {
+  authenticated: boolean;
+  user_id: string;
+  organization_id: string;
+  is_guest: boolean;
+  role_id: string;
+  allowed_scopes: string[];
+  user_permission: string;
+}
+
+export async function validateSession(): Promise<SessionInfo | null> {
+  try {
+    const res = await fetch(`${API_BASE}/session`, {
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    });
+    if (!res.ok) {
+      return null;
+    }
+    return await res.json();
+  } catch {
+    return null;
+  }
 }
 
 export async function sendChatMessage(query: string): Promise<ChatResponse> {
@@ -42,6 +63,7 @@ export async function sendChatMessage(query: string): Promise<ChatResponse> {
   const res = await fetch(`${API_BASE}/chat`, {
     method: 'POST',
     headers,
+    credentials: 'include',
     body: JSON.stringify({ query })
   });
 
@@ -56,6 +78,7 @@ export async function sendChatMessage(query: string): Promise<ChatResponse> {
 export async function getWorkspace(): Promise<OrganizationWorkspace> {
   const res = await fetch(`${API_BASE}/workspace`, {
     headers: getAuthHeaders(),
+    credentials: 'include',
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: 'Failed to fetch workspace' }));
@@ -67,6 +90,7 @@ export async function getWorkspace(): Promise<OrganizationWorkspace> {
 export async function getMemories(): Promise<MemoryItem[]> {
   const res = await fetch(`${API_BASE}/memories`, {
     headers: getAuthHeaders(),
+    credentials: 'include',
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: 'Failed to fetch memories' }));
@@ -79,6 +103,7 @@ export async function getMemories(): Promise<MemoryItem[]> {
 export async function getConnections(): Promise<ConnectionsData> {
   const res = await fetch(`${API_BASE}/connections`, {
     headers: getAuthHeaders(),
+    credentials: 'include',
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: 'Failed to fetch connections' }));
@@ -90,6 +115,7 @@ export async function getConnections(): Promise<ConnectionsData> {
 export async function getReviewItems(): Promise<ReviewData> {
   const res = await fetch(`${API_BASE}/review`, {
     headers: getAuthHeaders(),
+    credentials: 'include',
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: 'Failed to fetch review items' }));

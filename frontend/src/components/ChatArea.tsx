@@ -54,10 +54,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           .join('\n');
       }
 
-      if (activeSourceFilter && activeSourceFilter !== 'all') {
-        queryText = `[Filter: ${activeSourceFilter}] ${queryText}`;
-      }
-
+      // Query text remains unchanged user input without query-prefix string mutation
       try {
         const response = await sendChatMessage(queryText);
         const assistantId = `assistant-${Date.now()}`;

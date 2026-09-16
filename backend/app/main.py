@@ -18,6 +18,7 @@ from app.api.imports import router as imports_router
 from app.api.webhooks import router as webhooks_router
 from app.api.identity import router as identity_router
 from app.api.delivery import router as delivery_router
+from app.api.session import router as session_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -104,6 +105,7 @@ app.include_router(imports_router, prefix=settings.API_PREFIX)
 app.include_router(webhooks_router, prefix=settings.API_PREFIX)
 app.include_router(identity_router, prefix=settings.API_PREFIX)
 app.include_router(delivery_router, prefix=settings.API_PREFIX)
+app.include_router(session_router, prefix=settings.API_PREFIX)
 
 
 @app.get("/health")

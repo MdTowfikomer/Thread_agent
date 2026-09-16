@@ -3,7 +3,7 @@ import { Navbar } from '../components/Navbar';
 import { Sidebar } from '../components/Sidebar';
 import { ChatArea } from '../components/ChatArea';
 import { AuthModal } from '../components/AuthModal';
-import { getWorkspace, getMemories, getConnections, getReviewItems, getAuthToken, clearAuthToken, ApiError } from '../api';
+import { getWorkspace, getMemories, getConnections, getReviewItems, validateSession, clearAuthToken, ApiError } from '../api';
 import { OrganizationWorkspace, MemoryItem, ConnectionsData, ReviewData, ConnectionItem } from '../types';
 import { AlertTriangle, KeyRound } from 'lucide-react';
 
@@ -24,7 +24,7 @@ export const WorkspacePage: React.FC<WorkspacePageProps> = ({ onNavigate, curren
   const [connections, setConnections] = useState<ConnectionsData | null>(null);
   const [reviewData, setReviewData] = useState<ReviewData | null>(null);
 
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => !!getAuthToken());
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [authErrorDetail, setAuthErrorDetail] = useState<string | undefined>(undefined);
   const [loadingWorkspace, setLoadingWorkspace] = useState<boolean>(true);
@@ -32,10 +32,19 @@ export const WorkspacePage: React.FC<WorkspacePageProps> = ({ onNavigate, curren
   const loadWorkspaceData = async () => {
     setLoadingWorkspace(true);
     setAuthErrorDetail(undefined);
+
+    const session = await validateSession();
+    if (!session) {
+      setIsAuthenticated(false);
+      setAuthErrorDetail('Session is unauthenticated or invalid (401).');
+      setLoadingWorkspace(false);
+      return;
+    }
+
+    setIsAuthenticated(true);
     try {
       const ws = await getWorkspace();
       setWorkspace(ws);
-      setIsAuthenticated(true);
 
       Promise.all([
         getMemories().catch(() => []),
@@ -49,7 +58,7 @@ export const WorkspacePage: React.FC<WorkspacePageProps> = ({ onNavigate, curren
     } catch (err: any) {
       if (err instanceof ApiError && err.status === 401) {
         setIsAuthenticated(false);
-        setAuthErrorDetail('Session is unauthenticated or bearer token is invalid (401).');
+        setAuthErrorDetail('Session is unauthenticated or invalid (401).');
       } else {
         setAuthErrorDetail(err.message || 'Error connecting to workspace backend.');
       }

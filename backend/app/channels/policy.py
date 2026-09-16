@@ -53,7 +53,7 @@ class ChannelPolicyStore:
                             guild_id=gid,
                             channel_id=str(cid),
                             channel_name=name,
-                            permission_scope=PermissionLevel(scope),
+                            permission_scope=PermissionLevel(str(scope).upper()),
                             is_active=bool(active),
                             metadata=meta or {}
                         )
@@ -163,7 +163,7 @@ class ChannelPolicyStore:
                                     guild_id=r[2],
                                     channel_id=str(r[3]),
                                     channel_name=r[4],
-                                    permission_scope=PermissionLevel(r[5]),
+                                    permission_scope=PermissionLevel(str(r[5]).upper()),
                                     is_active=bool(r[6]),
                                     metadata=r[7] or {}
                                 )

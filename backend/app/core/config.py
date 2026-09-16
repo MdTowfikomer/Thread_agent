@@ -29,6 +29,10 @@ class Settings:
     # LLM Keys
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+
+    @property
+    def gemini_api_key(self) -> str:
+        return os.getenv("GEMINI_API_KEY", os.getenv("GOOGLE_API_KEY", self.GEMINI_API_KEY)).strip()
     
     # Supabase (Optional - fallback to memory store if omitted)
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")

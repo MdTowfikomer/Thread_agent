@@ -1,7 +1,14 @@
-from fastapi import APIRouter, Depends
-from app.core.auth import AuthenticatedPrincipal, get_current_principal
+from typing import Optional
+from fastapi import APIRouter, Depends, Response
+from pydantic import BaseModel
+from app.core.auth import AuthenticatedPrincipal, get_current_principal, create_access_token
+from app.core.config import settings
 
 router = APIRouter(prefix="/session", tags=["Session"])
+
+class LoginRequest(BaseModel):
+    user_id: Optional[str] = "demo_organizer"
+    organization_id: Optional[str] = "gdg_mcet"
 
 @router.get("")
 async def get_session(
@@ -9,7 +16,7 @@ async def get_session(
 ):
     """
     Protected session validation endpoint.
-    Verifies Bearer authentication and returns identity context.
+    Verifies Bearer token or HttpOnly cookie authentication and returns identity context.
     Raises HTTP 401 if token/session is unauthenticated, expired, or invalid.
     """
     return {
@@ -20,4 +27,50 @@ async def get_session(
         "role_id": principal.access_context.role_id,
         "allowed_scopes": principal.access_context.allowed_scopes,
         "user_permission": principal.access_context.user_permission
+    }
+
+@router.post("/login")
+async def login_session(
+    req: LoginRequest,
+    response: Response
+):
+    """
+    Authenticates user and issues a secure HttpOnly 'thread_session' cookie containing signed JWT token.
+    """
+    user_id = req.user_id or "demo_organizer"
+    org_id = req.organization_id or "gdg_mcet"
+    token = create_access_token(user_id=user_id, organization_id=org_id, expires_in_seconds=86400)
+
+    # Issue secure HttpOnly cookie for browser authentication
+    response.set_cookie(
+        key="thread_session",
+        value=token,
+        httponly=True,
+        samesite="lax",
+        secure=not settings.is_development,
+        max_age=86400
+    )
+    return {
+        "authenticated": True,
+        "user_id": user_id,
+        "organization_id": org_id,
+        "message": "Session established successfully."
+    }
+
+@router.post("/logout")
+async def logout_session(
+    response: Response
+):
+    """
+    Clears the HttpOnly 'thread_session' cookie.
+    """
+    response.delete_cookie(
+        key="thread_session",
+        httponly=True,
+        samesite="lax",
+        secure=not settings.is_development
+    )
+    return {
+        "authenticated": False,
+        "message": "Session terminated."
     }

@@ -54,6 +54,32 @@ export async function validateSession(): Promise<SessionInfo | null> {
   }
 }
 
+export async function loginSession(userId: string = "demo_organizer"): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE}/session/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ user_id: userId, organization_id: 'gdg_mcet' })
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function logoutSession(): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE}/session/logout`, {
+      method: 'POST',
+      credentials: 'include'
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export async function sendChatMessage(query: string): Promise<ChatResponse> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',

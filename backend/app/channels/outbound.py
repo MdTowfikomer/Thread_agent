@@ -3,7 +3,7 @@ import json
 import os
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Protocol, Tuple
+from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 import httpx
 
@@ -235,7 +235,15 @@ class ChannelMessageDeliveryService:
             return matches[0]
         raise ValueError("Unsupported outbound platform.")
 
-    def send_message(self, principal: AuthenticatedPrincipal, platform: ChannelType, destination_id: str, query: str, idempotency_key: Optional[str] = None):
+    def send_message(
+        self,
+        principal: AuthenticatedPrincipal,
+        platform: ChannelType,
+        destination_id: str,
+        query: str,
+        idempotency_key: Optional[str] = None,
+        exclude_message_ids: Optional[List[str]] = None
+    ):
         if not query.strip():
             raise ValueError("Query cannot be empty.")
 
@@ -247,7 +255,8 @@ class ChannelMessageDeliveryService:
             organization_id=principal.organization_id,
             access_context=principal.access_context,
             session_key=session_key,
-            chat_history=chat_history
+            chat_history=chat_history,
+            exclude_message_ids=exclude_message_ids
         ))
 
         intent = result.get("intent_category", "ORGANIZATIONAL_FACTS") if isinstance(result, dict) else getattr(result, "intent_category", "ORGANIZATIONAL_FACTS")

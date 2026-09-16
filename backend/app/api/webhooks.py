@@ -226,7 +226,8 @@ async def discord_interactions_endpoint(request: Request, background_tasks: Back
         graph_state = GraphState(
             query=user_query,
             organization_id=org_id,
-            access_context=access_context
+            access_context=access_context,
+            exclude_message_ids=[interaction_id]
         )
 
         app_id = payload.get("application_id") or os.getenv("DISCORD_APPLICATION_ID", "1549157747495280641")
@@ -715,6 +716,7 @@ async def handle_telegram_webhook(request: Request):
                     destination_id=chat_id,
                     query=clean_query,
                     idempotency_key=reply_delivery_id,
+                    exclude_message_ids=[str(event.message_id), record.id, delivery_id]
                 )
 
                 if send_result.get("status") == "insufficient_evidence":
@@ -885,12 +887,17 @@ async def handle_slack_events(request: Request):
             )
 
             # E. Run authorized retrieval, destination ACL check, and post grounded answer back to bound channel
+            exclude_ids = [str(event_ts), event_id, msg_canonical_id, reply_delivery_id]
+            if record:
+                exclude_ids.append(record.id)
+
             send_result = channel_message_delivery_service.send_message(
                 principal=principal,
                 platform=ChannelType.SLACK,
                 destination_id=channel_id,
                 query=query,
                 idempotency_key=reply_delivery_id,
+                exclude_message_ids=exclude_ids
             )
 
             webhook_delivery_store.mark_completed(reply_delivery_id)

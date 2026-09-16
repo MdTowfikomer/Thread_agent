@@ -19,7 +19,7 @@ def get_llm():
     if os.environ.get("THREAD_FORCE_DETERMINISTIC_SYNTHESIS") == "1" or os.environ.get("THREAD_FORCE_DETERMINISTIC_EMBEDDINGS") == "1":
         return None
 
-    api_key = settings.gemini_api_key
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or getattr(settings, "gemini_api_key", getattr(settings, "GEMINI_API_KEY", ""))
     if api_key:
         try:
             from langchain_google_genai import ChatGoogleGenerativeAI
@@ -203,7 +203,8 @@ def retrieval_node(state: GraphState) -> Dict[str, Any]:
         query=state.query,
         access_context=ctx,
         top_k=4,
-        threshold=0.42
+        threshold=0.42,
+        exclude_message_ids=state.exclude_message_ids
     )
 
     new_trace = list(state.trace)

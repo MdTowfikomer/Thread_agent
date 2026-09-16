@@ -3,7 +3,7 @@ import { Navbar } from '../components/Navbar';
 import { Sidebar } from '../components/Sidebar';
 import { ChatArea } from '../components/ChatArea';
 import { AuthModal } from '../components/AuthModal';
-import { getWorkspace, getMemories, getConnections, getReviewItems, validateSession, clearAuthToken, ApiError } from '../api';
+import { getWorkspace, getMemories, getConnections, getReviewItems, validateSession, logoutSession, clearAuthToken, ApiError } from '../api';
 import { OrganizationWorkspace, MemoryItem, ConnectionsData, ReviewData, ConnectionItem } from '../types';
 import { AlertTriangle, KeyRound } from 'lucide-react';
 
@@ -71,7 +71,8 @@ export const WorkspacePage: React.FC<WorkspacePageProps> = ({ onNavigate, curren
     loadWorkspaceData();
   }, []);
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
+    await logoutSession();
     clearAuthToken();
     setIsAuthenticated(false);
     setWorkspace(null);

@@ -263,7 +263,7 @@ def test_telegram_webhook_mention_triggers_reply(monkeypatch):
     from app.channels.outbound import channel_message_delivery_service
 
     send_calls = []
-    def mock_send_message(principal, platform, destination_id, query, idempotency_key):
+    def mock_send_message(principal, platform, destination_id, query, idempotency_key=None, **kwargs):
         send_calls.append({
             "principal": principal,
             "platform": platform,

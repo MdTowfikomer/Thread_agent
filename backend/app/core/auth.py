@@ -1,7 +1,7 @@
 import time
-from typing import Optional, Dict, Any
 import jwt
-from fastapi import Header, HTTPException, status
+from typing import Optional, Dict, Any
+from fastapi import Request, Header, Cookie, HTTPException, status
 from pydantic import BaseModel
 from app.core.config import settings
 from app.core.canonical import AccessContext, PermissionLevel
@@ -64,16 +64,18 @@ def verify_access_token(token: str) -> Dict[str, Any]:
         )
 
 def get_current_principal(
+    request: Request,
     authorization: Optional[str] = Header(None),
+    thread_session: Optional[str] = Cookie(None, alias="thread_session"),
     x_dev_demo_user: Optional[str] = Header(None, alias="X-Dev-Demo-User")
 ) -> AuthenticatedPrincipal:
     """
     Authoritative authentication dependency.
-    In production, identity MUST derive from a verified Bearer token.
+    In production, identity MUST derive from a verified Bearer token OR secure HttpOnly 'thread_session' cookie.
     Body user_id and X-User-Id are strictly ignored.
     X-Dev-Demo-User is strictly restricted to explicit demo identities.
     """
-    # 0. Restrict X-Dev-Demo-User to explicit demo identities only (reject arbitrary impersonation)
+    # 0. Restrict X-Dev-Demo-User to explicit demo identities only
     if x_dev_demo_user is not None:
         if x_dev_demo_user not in ALLOWED_DEV_DEMO_USERS:
             raise HTTPException(
@@ -81,36 +83,41 @@ def get_current_principal(
                 detail=f"Forbidden: X-Dev-Demo-User '{x_dev_demo_user}' is not an authorized demo identity. Allowed: {sorted(ALLOWED_DEV_DEMO_USERS)}"
             )
 
-    # 1. Bearer Token Verification
+    # 1. Resolve Token from Bearer Header or Secure HttpOnly Cookie
+    token = None
     if authorization:
         parts = authorization.split()
         if len(parts) == 2 and parts[0].lower() == "bearer":
             token = parts[1]
-            payload = verify_access_token(token)
-            user_id = payload.get("sub")
-            org_id = payload.get("org", "gdg_mcet")
-
-            if not user_id:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Malformed token payload: missing sub claim",
-                    headers={"WWW-Authenticate": "Bearer"}
-                )
-
-            # Derive permissions strictly from MembershipStore using verified token subject
-            ctx = membership_store.derive_access_context(user_id=user_id, organization_id=org_id)
-            return AuthenticatedPrincipal(
-                user_id=user_id,
-                organization_id=org_id,
-                is_guest=False,
-                access_context=ctx
-            )
         else:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid authorization header format. Expected 'Bearer <token>'",
                 headers={"WWW-Authenticate": "Bearer"}
             )
+    else:
+        token = thread_session or request.cookies.get("thread_session")
+
+    if token:
+        payload = verify_access_token(token)
+        user_id = payload.get("sub")
+        org_id = payload.get("org", "gdg_mcet")
+
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Malformed token payload: missing sub claim",
+                headers={"WWW-Authenticate": "Bearer"}
+            )
+
+        # Derive permissions strictly from MembershipStore using verified token subject
+        ctx = membership_store.derive_access_context(user_id=user_id, organization_id=org_id)
+        return AuthenticatedPrincipal(
+            user_id=user_id,
+            organization_id=org_id,
+            is_guest=False,
+            access_context=ctx
+        )
 
     # 2. Isolated Development-Only Demo Identity:
     # Requires BOTH APP_ENV=development AND THREAD_DEMO_AUTH_ENABLED=true

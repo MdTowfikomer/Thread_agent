@@ -41,6 +41,7 @@ env/
 
 # Pytest & Coverage
 .pytest_cache/
+.pytest_tmp/
 pytest-cache-files-*/
 .coverage
 htmlcov/

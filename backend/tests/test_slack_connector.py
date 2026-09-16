@@ -135,7 +135,7 @@ def test_app_mention_response_and_bot_stripping(monkeypatch):
 
     send_calls = []
 
-    def mock_send_message(principal, platform, destination_id, query, idempotency_key=None):
+    def mock_send_message(principal, platform, destination_id, query, idempotency_key=None, **kwargs):
         send_calls.append({
             "principal": principal,
             "platform": platform,

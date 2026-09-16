@@ -1,5 +1,3 @@
-export type UserRole = 'organizer' | 'community';
-
 export interface Citation {
   item_id: string;
   source: string;
@@ -38,19 +36,81 @@ export interface OrganizationWorkspace {
   roles: RoleAgent[];
 }
 
-export interface ChatMessage {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: string;
-  role_agent?: {
-    id: string;
-    name: string;
-    role: string;
-    avatar: string;
-    department: string;
+export interface ChatResponse {
+  query: string;
+  answer: string;
+  role_agent?: RoleAgent;
+  citations: Citation[];
+  confidence_score: number;
+  retrieval_receipt_id?: string;
+  receipt?: {
+    receipt_id: string;
+    organization_id: string;
+    allowed_scopes: string[];
+    candidates_retrieved: number;
+    candidates_after_acl: number;
   };
-  citations?: Citation[];
-  confidence_score?: number;
-  trace?: AgentTraceStep[];
+  sufficient_evidence?: boolean;
+  trace: AgentTraceStep[];
+  organization_id?: string;
+}
+
+export interface MemoryItem {
+  id: string;
+  source: string;
+  source_uri?: string;
+  author: string;
+  author_role?: string;
+  title?: string;
+  content: string;
+  permission: string;
+  tags?: string[];
+  entities?: string[];
+  provenance?: Record<string, any>;
+  timestamp: string;
+}
+
+export interface ConnectionItem {
+  id: string;
+  label: string;
+  status: string;
+  channels?: string[];
+}
+
+export interface ConnectionsData {
+  organization_id: string;
+  connections: {
+    github: ConnectionItem[];
+    discord: ConnectionItem[];
+    telegram: ConnectionItem[];
+    slack: ConnectionItem[];
+  };
+}
+
+export interface ReviewData {
+  organization_id: string;
+  quarantine: Array<{
+    id: string;
+    source: string;
+    title: string;
+    author: string;
+    content: string;
+    provenance?: Record<string, any>;
+  }>;
+  identity_links: Array<{
+    organization_id: string;
+    channel_type: string;
+    account_id: string;
+    is_verified: boolean;
+    is_active: boolean;
+  }>;
+}
+
+export interface AuthSession {
+  token: string | null;
+  userId?: string;
+  organizationId?: string;
+  isAuthenticated: boolean;
+  status: 'authenticated' | 'unauthenticated' | 'loading' | 'error';
+  errorDetail?: string;
 }

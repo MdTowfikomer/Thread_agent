@@ -1,17 +1,18 @@
 import React from 'react';
-import { OrganizationWorkspace, UserRole } from '../types';
-import { Users, Sparkles, ShieldCheck, Lock, ExternalLink } from 'lucide-react';
+import { OrganizationWorkspace } from '../types';
 
 interface SidebarProps {
   workspace: OrganizationWorkspace | null;
   onSelectPrompt: (prompt: string) => void;
-  userRole: UserRole;
+  activeSourceFilter: string;
+  onSelectSourceFilter: (source: string) => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
   workspace,
   onSelectPrompt,
-  userRole
+  activeSourceFilter,
+  onSelectSourceFilter,
 }) => {
   if (!workspace) return null;
 
@@ -19,70 +20,95 @@ export const Sidebar: React.FC<SidebarProps> = ({
     {
       title: "DevFest Venue Approval",
       text: "Where is DevFest taking place and has it been approved?",
-      role: "Lead Organizer"
+      source: "discord"
     },
     {
       title: "GenAI Workshop Setup",
       text: "What are the prerequisites for the GenAI workshop and where is the repo?",
-      role: "Tech Lead"
+      source: "github"
     },
     {
       title: "Swag & Catering Budget",
       text: "What is our internal budget for attendee t-shirts and swag?",
-      role: "Sponsorship & Finance Lead",
-      badge: "Internal Core"
+      source: "slack"
     },
     {
       title: "RSVP & Participation Rules",
       text: "How do community members register and what are certificate criteria?",
-      role: "Community Lead"
+      source: "telegram"
     }
   ];
 
+  const sourceFilters = [
+    { id: 'all', label: 'all' },
+    { id: 'discord', label: 'discord' },
+    { id: 'slack', label: 'slack' },
+    { id: 'telegram', label: 'telegram' },
+    { id: 'github', label: 'github' },
+  ];
+
   return (
-    <aside className="w-80 border-r border-slate-800/80 bg-slate-950/60 p-4 flex flex-col gap-6 overflow-y-auto hidden lg:flex">
-      {/* Workspace Header */}
-      <div>
-        <div className="flex items-center gap-2 mb-1.5">
-          <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
-          <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-            Active Workspace
-          </h2>
+    <aside className="w-72 border-r border-neutral-800 bg-[#0a0a0a] p-4 flex flex-col gap-6 overflow-y-auto shrink-0 hidden lg:flex font-mono text-xs">
+      {/* Workspace Summary */}
+      <div className="pb-3 border-b border-neutral-900">
+        <div className="text-[10px] uppercase text-neutral-500 tracking-wider mb-1">
+          // Workspace
         </div>
-        <h3 className="text-base font-extrabold text-white tracking-tight">
+        <div className="font-bold text-neutral-100 text-sm">
           {workspace.name}
-        </h3>
-        <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+        </div>
+        <p className="text-[11px] text-neutral-500 mt-1 leading-normal font-sans">
           {workspace.description}
         </p>
       </div>
 
-      {/* Suggested Queries */}
+      {/* Source Scope Filter */}
       <div>
-        <div className="flex items-center gap-2 mb-3">
-          <Sparkles className="w-4 h-4 text-amber-400" />
-          <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
-            Reconstruct Context
-          </h4>
+        <div className="text-[10px] uppercase text-neutral-500 tracking-wider mb-2">
+          // Source Filter
+        </div>
+        <div className="flex flex-col gap-1">
+          {sourceFilters.map(f => {
+            const isActive = activeSourceFilter === f.id;
+            return (
+              <button
+                key={f.id}
+                onClick={() => onSelectSourceFilter(f.id)}
+                className={`text-left px-2 py-1 text-[11px] font-mono transition-colors cursor-pointer flex items-center justify-between ${
+                  isActive
+                    ? 'text-neutral-100 font-bold border-l-2 border-neutral-200 bg-neutral-900/60 pl-2.5'
+                    : 'text-neutral-400 hover:text-neutral-200'
+                }`}
+              >
+                <span>{f.label}</span>
+                {isActive && <span className="text-[9px] text-neutral-500">&bull;</span>}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Sample Context Reconstruction Prompts */}
+      <div>
+        <div className="text-[10px] uppercase text-neutral-500 tracking-wider mb-2">
+          // Inquiries
         </div>
         <div className="flex flex-col gap-2">
           {samplePrompts.map((p, idx) => (
             <button
               key={idx}
               onClick={() => onSelectPrompt(p.text)}
-              className="text-left p-2.5 rounded-xl bg-slate-900/80 border border-slate-800/90 hover:border-indigo-500/50 hover:bg-indigo-950/20 transition-all group cursor-pointer"
+              className="text-left p-2.5 border-l border-neutral-800 hover:border-neutral-400 transition-colors group cursor-pointer"
             >
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-semibold text-slate-200 group-hover:text-indigo-300">
+              <div className="flex items-center justify-between text-[11px] mb-1">
+                <span className="font-bold text-neutral-300 group-hover:text-neutral-100">
                   {p.title}
                 </span>
-                {p.badge && (
-                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                    {p.badge}
-                  </span>
-                )}
+                <span className="text-[9px] text-neutral-600 font-mono">
+                  [{p.source}]
+                </span>
               </div>
-              <p className="text-[11px] text-slate-400 line-clamp-2">
+              <p className="text-[11px] text-neutral-500 line-clamp-2 font-sans leading-relaxed">
                 "{p.text}"
               </p>
             </button>
@@ -92,64 +118,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Role Agents */}
       <div className="flex-1">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Users className="w-4 h-4 text-indigo-400" />
-            <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
-              Role Agents ({workspace.roles.length})
-            </h4>
-          </div>
+        <div className="text-[10px] uppercase text-neutral-500 tracking-wider mb-2">
+          // Role Agents ({workspace.roles.length})
         </div>
 
-        <div className="flex flex-col gap-2.5">
+        <div className="flex flex-col gap-3">
           {workspace.roles.map((agent) => (
-            <div
-              key={agent.id}
-              className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800/80 hover:border-slate-700 transition-all"
-            >
-              <div className="flex items-center gap-2.5 mb-1.5">
-                <img
-                  src={agent.avatar}
-                  alt={agent.name}
-                  className="w-8 h-8 rounded-lg bg-slate-800 ring-1 ring-slate-700"
-                />
-                <div className="min-w-0 flex-1">
-                  <h5 className="text-xs font-bold text-slate-200 truncate">
-                    {agent.name}
-                  </h5>
-                  <p className="text-[11px] text-indigo-400 font-medium truncate">
-                    {agent.role}
-                  </p>
-                </div>
+            <div key={agent.id} className="text-[11px]">
+              <div className="flex items-center justify-between font-bold text-neutral-200">
+                <span>{agent.name}</span>
+                <span className="text-[10px] text-neutral-500 font-normal">{agent.role}</span>
               </div>
-
-              <div className="flex flex-wrap gap-1 mt-2">
-                {agent.expertise.slice(0, 3).map((tag, tIdx) => (
-                  <span
-                    key={tIdx}
-                    className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700/60"
-                  >
-                    {tag}
-                  </span>
-                ))}
+              <div className="text-[10px] text-neutral-500 mt-1 font-mono">
+                {agent.expertise.slice(0, 3).join(" • ")}
               </div>
             </div>
           ))}
         </div>
       </div>
 
-      {/* Security Architecture Principle Box */}
-      <div className="p-3 rounded-xl bg-slate-900/50 border border-slate-800/80 text-[11px] text-slate-400">
-        <div className="flex items-center gap-1.5 text-slate-300 font-semibold mb-1">
-          <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Pre-Retrieval ACL Active</span>
-        </div>
-        <p className="text-[10px] leading-relaxed text-slate-400">
-          Thread enforces permissions <strong>before retrieval</strong>, not after the LLM generates an answer. 
-          {userRole === 'community'
-            ? ' As a Community Member, confidential budget numbers and private roldexes are omitted from the vector search space entirely.'
-            : ' As an Organizer Core member, you have authenticated access to internal documents and financial allocations.'}
-        </p>
+      {/* Pre-ACL Security Note */}
+      <div className="pt-3 border-t border-neutral-900 text-[10px] text-neutral-500">
+        Pre-retrieval security boundary enforced per Bearer token scope.
       </div>
     </aside>
   );

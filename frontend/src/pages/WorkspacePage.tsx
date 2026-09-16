@@ -209,12 +209,10 @@ function ConnectionRow({ platform, items }: { platform: string; items: Connectio
         <p className="text-lg capitalize text-neutral-100">{platform}</p>
         <p className="mt-1 text-sm text-neutral-500">{items.length ? 'Connected' : 'Not connected'}</p>
       </div>
-      {items.length ? (
-        <div className="space-y-3">
-          {items.map((item) => <p key={item.id} className="text-sm text-neutral-400">{item.label}{item.channels?.length ? ` · ${item.channels.length} channel${item.channels.length === 1 ? '' : 's'}` : ''}</p>)}
-          {testUrl && <a href={testUrl} target="_blank" rel="noreferrer" className="inline-flex border-b border-neutral-600 pb-1 text-sm text-neutral-200 transition-colors hover:border-neutral-100">{testLabel}</a>}
-        </div>
-      ) : <p className="text-sm text-neutral-600">No active binding is exposed in this session.</p>}
+      <div className="space-y-3">
+        {items.length ? items.map((item) => <p key={item.id} className="text-sm text-neutral-400">{item.label}{item.channels?.length ? ` · ${item.channels.length} channel${item.channels.length === 1 ? '' : 's'}` : ''}</p>) : <p className="text-sm text-neutral-600">No active binding is exposed in this session.</p>}
+        {testUrl && <a href={testUrl} target="_blank" rel="noreferrer" className="inline-flex w-fit border-b border-neutral-600 pb-1 text-sm text-neutral-200 transition-colors hover:border-neutral-100">{testLabel}</a>}
+      </div>
     </div>
   );
 }

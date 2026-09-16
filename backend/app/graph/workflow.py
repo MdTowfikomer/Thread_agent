@@ -24,7 +24,7 @@ def get_llm():
     if api_key:
         try:
             from langchain_google_genai import ChatGoogleGenerativeAI
-            gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+            gemini_model = os.getenv("GEMINI_MODEL") or "gemini-3.6-flash"
             return ChatGoogleGenerativeAI(
                 model=gemini_model,
                 google_api_key=api_key,
@@ -283,10 +283,14 @@ def role_agent_node(state: GraphState) -> Dict[str, Any]:
     }
 
 
+
+FALLBACK_GEMINI_MODELS = ["gemini-3.5-flash-lite"]
+
+
 def invoke_llm_with_fallback(llm, system_prompt: str) -> Optional[str]:
     """
     Safely invoke the LLM. If the primary model encounters a 429 quota error or failure,
-    automatically attempt fallback Gemini models (gemini-2.5-flash, gemini-2.0-flash, gemini-1.5-flash, gemini-2.5-flash-lite)
+    automatically attempt fallback Gemini models (such as gemini-3.5-flash-lite)
     and OpenAI if available.
     """
     if llm:
@@ -302,9 +306,8 @@ def invoke_llm_with_fallback(llm, system_prompt: str) -> Optional[str]:
 
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or getattr(settings, "gemini_api_key", "")
     if api_key:
-        fallback_models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash-lite"]
-        curr_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
-        for model_name in fallback_models:
+        curr_model = os.getenv("GEMINI_MODEL") or "gemini-3.6-flash"
+        for model_name in FALLBACK_GEMINI_MODELS:
             if model_name == curr_model:
                 continue
             try:

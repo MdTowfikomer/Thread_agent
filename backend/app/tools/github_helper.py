@@ -28,13 +28,19 @@ class GitHubHelper:
             return None
 
     def get_bound_repository(self, org_id: str = "gdg_mcet") -> Dict[str, Any]:
-        """Fetch authoritative bound repository for organization."""
+        """Fetch authoritative bound repository for organization. Fails closed if DB binding unavailable."""
         conn = self._get_db_conn()
         if not conn:
+            if os.getenv("THREAD_ALLOW_OFFLINE_BINDINGS") == "1":
+                return {
+                    "repository_name": self._default_repo,
+                    "url": f"https://github.com/{self._default_repo}",
+                    "is_active": True,
+                }
             return {
-                "repository_name": self._default_repo,
-                "url": f"https://github.com/{self._default_repo}",
-                "is_active": True,
+                "repository_name": None,
+                "url": None,
+                "is_active": False
             }
 
         try:
@@ -63,10 +69,17 @@ class GitHubHelper:
             except Exception:
                 pass
 
+        if os.getenv("THREAD_ALLOW_OFFLINE_BINDINGS") == "1":
+            return {
+                "repository_name": self._default_repo,
+                "url": f"https://github.com/{self._default_repo}",
+                "is_active": True,
+            }
+
         return {
-            "repository_name": self._default_repo,
-            "url": f"https://github.com/{self._default_repo}",
-            "is_active": True,
+            "repository_name": None,
+            "url": None,
+            "is_active": False
         }
 
     def get_recent_commits(self, org_id: str = "gdg_mcet", count: int = 5) -> Optional[List[Dict[str, Any]]]:
@@ -75,7 +88,9 @@ class GitHubHelper:
         Returns None if connection/API is unavailable.
         """
         repo_info = self.get_bound_repository(org_id)
-        repo_name = repo_info.get("repository_name", self._default_repo)
+        repo_name = repo_info.get("repository_name")
+        if not repo_name or not repo_info.get("is_active"):
+            return None
 
         url = f"https://api.github.com/repos/{repo_name}/commits?per_page={count}"
         headers = {
@@ -105,7 +120,8 @@ class GitHubHelper:
                                 "sha": sha,
                                 "message": msg,
                                 "author": author_name,
-                                "date": date_str
+                                "date": date_str,
+                                "url": f"https://github.com/{repo_name}/commit/{sha}"
                             })
                         return commits
             return None
@@ -115,6 +131,10 @@ class GitHubHelper:
 
     def format_github_response(self, repo_info: Dict[str, Any], query: str = "", org_id: str = "gdg_mcet") -> str:
         """Format GitHub repository status or commit history response."""
+        repo_name = repo_info.get("repository_name")
+        if not repo_name or not repo_info.get("is_active"):
+            return "No authoritative GitHub repository binding is currently configured for this organization."
+
         q_lower = (query or "").lower()
         is_commit_query = any(k in q_lower for k in ("commit", "commits", "history", "latest", "recent"))
 
@@ -138,7 +158,6 @@ class GitHubHelper:
             if commits is None:
                 return "GitHub connection is currently unavailable. Unable to fetch repository commits."
 
-            repo_name = repo_info.get("repository_name", self._default_repo)
             if not commits:
                 return f"No commits found for repository **{repo_name}**."
 
@@ -150,12 +169,13 @@ class GitHubHelper:
                 if date_str and "T" in date_str:
                     date_str = date_str.split("T")[0]
                 date_part = f" on {date_str}" if date_str else ""
-                lines.append(f"{idx}. `{c.get('sha')}` - **{c.get('message')}** *(by {author}{date_part})*")
+                commit_sha = c.get("sha")
+                commit_url = c.get("url") or f"https://github.com/{repo_name}/commit/{commit_sha}"
+                lines.append(f"{idx}. [`{commit_sha}`]({commit_url}) - **{c.get('message')}** *(by {author}{date_part})*")
 
             return "\n".join(lines)
 
-        repo_name = repo_info.get("repository_name", self._default_repo)
-        repo_url = repo_info.get("url", f"https://github.com/{repo_name}")
+        repo_url = repo_info.get("url") or f"https://github.com/{repo_name}"
 
         return (
             f"🐙 **Official GDG MCET GitHub Repository**\n\n"

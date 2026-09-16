@@ -50,6 +50,10 @@ class Settings:
         return os.getenv("THREAD_DEMO_AUTH_ENABLED", "false").lower() in ("true", "1", "yes")
 
     @property
+    def demo_workspace_enabled(self) -> bool:
+        return os.getenv("THREAD_DEMO_WORKSPACE_ENABLED", "false").lower() in ("true", "1", "yes")
+
+    @property
     def allow_guest_mode(self) -> bool:
         return os.getenv("THREAD_ALLOW_GUEST_MODE", "false").lower() in ("true", "1", "yes")
 

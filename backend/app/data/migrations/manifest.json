@@ -96,7 +96,7 @@
       "description": "Server-owned Discord guild installations and channel policies tables with RLS and production seeds"
     },
     "019_filter_hybrid_search_by_embedding_model": {
-      "sha256": "f5c809ab27d372e49313ac9da8ec3e56a4f172637d2f4319200bf66df8ec89a9",
+      "sha256": "eebdfbbea9ecddcb06cc9c667bcea56d36afd490795910ba9d406e82df46543c",
       "status": "frozen",
       "description": "Server-side FTS Search RPC and Homogeneous Embedding Model Filter in Hybrid Search RPC"
     }

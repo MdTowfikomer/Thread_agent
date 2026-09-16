@@ -158,3 +158,48 @@ def test_live_gemini_provider_embedding_smoke_test():
     assert len(vec) == 768
     assert store._active_model_name == settings.DEFAULT_EMBEDDING_MODEL
 
+
+# 6. Outage chunk with 'pending_reembed' status is claimed by ReembeddingJob and upgraded to 'ready'
+def test_outage_chunk_claimed_and_upgraded_by_reembedding_job():
+    from app.data.reembedder import ReembeddingJob
+
+    mock_conn = MagicMock()
+    mock_cur = MagicMock()
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cur
+
+    # Simulated chunk created during embedding outage with 'pending_reembed' status
+    outage_chunk_row = {
+        "id": "outage_chunk_123",
+        "title": "Outage Msg",
+        "content": "Message received during embedding provider outage",
+        "author": "User",
+        "tags": ["discord"],
+        "reembed_attempts": 0,
+        "embedding_status": "pending_reembed"
+    }
+    mock_cur.fetchall.return_value = [outage_chunk_row]
+
+    mock_embed_fn = MagicMock(return_value=([0.05] * 768, "models/gemini-embedding-001", 768))
+
+    job = ReembeddingJob(
+        db_url="postgresql://fake",
+        batch_size=1,
+        embed_fn=mock_embed_fn,
+        embedding_model="models/gemini-embedding-001"
+    )
+
+    processed = job.process_batch(mock_conn, limit=1)
+    assert processed == 1
+    assert mock_embed_fn.call_count == 1
+
+    # Verify database update
+    item_updates = [c for c in mock_cur.execute.call_args_list if "WHERE id = %s" in str(c)]
+    assert len(item_updates) == 1
+
+    update_sql, update_args = item_updates[0][0][0], item_updates[0][0][1]
+    assert "embedding_status = 'ready'" in update_sql
+    assert update_args[1] == "models/gemini-embedding-001"
+    assert update_args[2] == 768
+    assert update_args[4] == "outage_chunk_123"
+
+

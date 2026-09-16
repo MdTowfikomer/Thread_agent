@@ -97,6 +97,17 @@ class MembershipStore:
             is_active=True
         )
 
+        self.register_member(
+            user_id="demo_judge",
+            name="Demo Viewer",
+            email="viewer.demo@gdgmcet.org",
+            organization_id="gdg_mcet",
+            role_id="community_member",
+            role_name="Demo Viewer",
+            permission=PermissionLevel.PUBLIC_COMMUNITY,
+            is_active=True
+        )
+
         # 6. Real Lead Organizer: Towfik Omer
         self.register_member(
             user_id="usr_towfik",

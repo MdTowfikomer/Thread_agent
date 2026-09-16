@@ -54,13 +54,11 @@ export async function validateSession(): Promise<SessionInfo | null> {
   }
 }
 
-export async function loginSession(userId: string = "demo_organizer"): Promise<boolean> {
+export async function startDemoSession(): Promise<boolean> {
   try {
-    const res = await fetch(`${API_BASE}/session/login`, {
+    const res = await fetch(`${API_BASE}/session/demo`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ user_id: userId, organization_id: 'gdg_mcet' })
     });
     return res.ok;
   } catch {

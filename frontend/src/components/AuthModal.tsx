@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ShieldAlert, X, RefreshCw, KeyRound } from 'lucide-react';
-import { loginSession } from '../api';
+import { startDemoSession } from '../api';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -22,7 +22,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const handleLogin = async () => {
     setAuthenticating(true);
     try {
-      await loginSession("demo_organizer");
+      await startDemoSession();
       onAuthenticated();
     } finally {
       setAuthenticating(false);
@@ -39,10 +39,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </div>
             <div>
               <h3 className="font-bold text-xs uppercase tracking-wider text-neutral-100">
-                Session Authentication
+                Live Demo Access
               </h3>
               <p className="text-[10px] text-neutral-500 font-sans">
-                Secure HttpOnly Cookie Boundary (/api/session)
+                Public-only workspace session
               </p>
             </div>
           </div>
@@ -57,15 +57,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         <div className="p-3.5 rounded bg-neutral-900/90 border border-neutral-800 text-neutral-300 text-xs flex items-start gap-2.5">
           <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
           <div className="space-y-1">
-            <span className="font-bold text-neutral-100 block">// Signed-Out State</span>
+            <span className="font-bold text-neutral-100 block">Demo access required</span>
             <p className="text-[11px] text-neutral-400 leading-relaxed font-sans">
-              {errorDetail || 'Session is unauthenticated or invalid (401). Pasting JWT tokens into browser storage is strictly disabled.'}
+              {errorDetail || 'Open a public-only demo session to continue.'}
             </p>
           </div>
         </div>
 
         <p className="text-[11px] text-neutral-500 font-sans leading-relaxed">
-          Identity validation is enforced via <code className="text-neutral-300 bg-neutral-900 px-1 py-0.5 rounded font-mono">/api/session</code>. Authenticating issues an encrypted HttpOnly session cookie from the backend.
+          Thread issues a short-lived HttpOnly session cookie for the fixed Demo Viewer identity. The browser cannot choose its role or organization.
         </p>
 
         <div className="flex items-center justify-end gap-2 pt-3 border-t border-neutral-800">
@@ -83,7 +83,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             className="flex items-center gap-1.5 px-3.5 py-1.5 rounded bg-neutral-100 hover:bg-white text-neutral-900 text-xs font-bold font-mono disabled:opacity-50 cursor-pointer transition-colors"
           >
             <KeyRound className="w-3.5 h-3.5" />
-            <span>{authenticating ? 'Establishing Cookie...' : 'Establish Session Cookie'}</span>
+            <span>{authenticating ? 'Opening demo...' : 'Open demo workspace'}</span>
           </button>
         </div>
       </div>

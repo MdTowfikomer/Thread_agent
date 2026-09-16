@@ -1,14 +1,8 @@
-from typing import Optional
-from fastapi import APIRouter, Depends, Response
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from app.core.auth import AuthenticatedPrincipal, get_current_principal, create_access_token
 from app.core.config import settings
 
 router = APIRouter(prefix="/session", tags=["Session"])
-
-class LoginRequest(BaseModel):
-    user_id: Optional[str] = "demo_organizer"
-    organization_id: Optional[str] = "gdg_mcet"
 
 @router.get("")
 async def get_session(
@@ -29,32 +23,29 @@ async def get_session(
         "user_permission": principal.access_context.user_permission
     }
 
-@router.post("/login")
-async def login_session(
-    req: LoginRequest,
-    response: Response
-):
-    """
-    Authenticates user and issues a secure HttpOnly 'thread_session' cookie containing signed JWT token.
-    """
-    user_id = req.user_id or "demo_organizer"
-    org_id = req.organization_id or "gdg_mcet"
-    token = create_access_token(user_id=user_id, organization_id=org_id, expires_in_seconds=86400)
+@router.post("/demo")
+async def create_demo_session(response: Response):
+    """Issue a fixed, public-only session for the enabled live demo."""
+    if not settings.demo_workspace_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Demo workspace is unavailable.")
 
-    # Issue secure HttpOnly cookie for browser authentication
+    user_id = "demo_judge"
+    organization_id = "gdg_mcet"
+    token = create_access_token(user_id=user_id, organization_id=organization_id, expires_in_seconds=3600)
+
     response.set_cookie(
         key="thread_session",
         value=token,
         httponly=True,
         samesite="lax",
         secure=not settings.is_development,
-        max_age=86400
+        max_age=3600
     )
     return {
         "authenticated": True,
         "user_id": user_id,
-        "organization_id": org_id,
-        "message": "Session established successfully."
+        "organization_id": organization_id,
+        "message": "Demo session established successfully."
     }
 
 @router.post("/logout")

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { LandingPage } from './pages/LandingPage';
+import { AuthPage } from './pages/AuthPage';
 import { WorkspacePage } from './pages/WorkspacePage';
 
 export function App() {
@@ -22,7 +23,11 @@ export function App() {
   };
 
   if (currentRoute === '/') {
-    return <LandingPage onOpenWorkspace={() => navigate('/app')} />;
+    return <LandingPage onOpenWorkspace={() => navigate('/auth')} />;
+  }
+
+  if (currentRoute === '/auth') {
+    return <AuthPage onBack={() => navigate('/')} onAuthenticated={() => navigate('/app')} />;
   }
 
   return <WorkspacePage onNavigate={navigate} currentRoute={currentRoute} />;

@@ -1,6 +1,8 @@
 import pytest
+from types import SimpleNamespace
 from app.channels.formatter import convert_markdown_to_telegram_html, convert_markdown_to_slack_mrkdwn, format_response_for_platform
 from app.core.canonical import ChannelType
+from app.channels.outbound import ChannelMessageDeliveryService
 
 def test_formatter_no_placeholder_leak():
     sample_text = (
@@ -37,3 +39,44 @@ def test_formatter_no_placeholder_leak():
     assert "XCODEBLOCKX" not in discord_out
     assert "___INLINE_CODE_" not in discord_out
     assert "Confidence:" not in discord_out
+
+
+def test_prepared_telegram_message_is_formatted_exactly_once(monkeypatch):
+    class FakeAuditStore:
+        def claim(self, *_args, **_kwargs):
+            return True, None
+
+        def finish(self, *_args, **_kwargs):
+            return None
+
+    sent = {}
+
+    class FakeAdapter:
+        def send(self, _destination, text, _key):
+            sent["text"] = text
+            return "42"
+
+    service = ChannelMessageDeliveryService(audit_store=FakeAuditStore())
+    service.adapters[ChannelType.TELEGRAM] = FakeAdapter()
+    monkeypatch.setattr(service, "_resolve_destination", lambda *_args: {"chat_id": "123"})
+
+    source = "* **Date & Time:** Saturday at 3:00 PM"
+    service.send_prepared_message(
+        principal=SimpleNamespace(organization_id="gdg_mcet", user_id="demo_judge"),
+        platform=ChannelType.TELEGRAM,
+        destination_id="123",
+        text=source,
+        idempotency_key="telegram-format-once",
+    )
+
+    assert sent["text"] == source
+
+
+def test_telegram_event_list_renders_as_bullets_and_html():
+    formatted = convert_markdown_to_telegram_html(
+        "* **Date & Time:** Saturday at 3:00 PM\n* **Location:** Lab 2"
+    )
+
+    assert formatted == "• <b>Date &amp; Time:</b> Saturday at 3:00 PM\n• <b>Location:</b> Lab 2"
+    assert "\\*" not in formatted
+    assert "&lt;b&gt;" not in formatted

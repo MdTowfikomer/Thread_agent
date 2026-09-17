@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 import httpx
 
-from app.channels.formatter import format_response_for_platform
+from app.channels.formatter import coerce_model_text, format_response_for_platform
 from app.channels.installation import guild_installation_store, slack_binding_store, telegram_binding_store
 from app.channels.policy import channel_policy_store
 from app.core.auth import AuthenticatedPrincipal
@@ -398,7 +398,9 @@ class ChannelMessageDeliveryService:
         idempotency_key: Optional[str] = None
     ) -> Dict[str, Any]:
         """Path 2: Deliver an already validated plain-text answer without invoking app_graph."""
-        outbound_text = format_response_for_platform(text, platform)
+        # Platform adapters own formatting. Formatting here as well would make
+        # Telegram escape its already-generated HTML on the second pass.
+        outbound_text = coerce_model_text(text).strip()
         if not outbound_text.strip():
             raise ValueError("Text cannot be empty.")
 

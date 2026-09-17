@@ -92,6 +92,10 @@ def convert_markdown_to_telegram_html(text: Any) -> str:
     # Escape raw HTML characters in remaining text
     cleaned = cleaned.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
+    # Markdown list markers are not italic delimiters. Convert them before
+    # applying inline emphasis so Telegram receives readable bullets.
+    cleaned = re.sub(r"(?m)^\s*[-*]\s+", "• ", cleaned)
+
     # Convert **bold** to <b>bold</b>
     cleaned = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", cleaned)
 
@@ -186,4 +190,3 @@ def format_response_for_platform(text: Any, platform: ChannelType) -> str:
         cleaned = re.sub(r"XCODEBLOCKX\d+X", "", cleaned)
         cleaned = re.sub(r"___INLINE_CODE_\d+___", "", cleaned)
         return cleaned.strip()
-

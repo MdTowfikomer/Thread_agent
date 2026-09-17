@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, ArrowRight, Link2, MessageSquareText, Network } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Link2, MessageSquareText, Network, RefreshCw } from 'lucide-react';
 import { ChatArea } from '../components/ChatArea';
 import { demoPlatformLinks } from '../demoLinks';
 import { Navbar } from '../components/Navbar';
@@ -20,6 +20,8 @@ export const WorkspacePage: React.FC<WorkspacePageProps> = ({ onNavigate, curren
   const [selectedPromptQuery, setSelectedPromptQuery] = useState<string | null>(null);
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [connections, setConnections] = useState<ConnectionsData | null>(null);
+  const [isRefreshingTimeline, setIsRefreshingTimeline] = useState(false);
+  const [timelineUpdatedAt, setTimelineUpdatedAt] = useState<Date | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loadingWorkspace, setLoadingWorkspace] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -43,6 +45,7 @@ export const WorkspacePage: React.FC<WorkspacePageProps> = ({ onNavigate, curren
         getConnections().catch(() => null),
       ]);
       setMemories(loadedMemories);
+      setTimelineUpdatedAt(new Date());
       setConnections(loadedConnections);
     } catch (requestError) {
       if (requestError instanceof ApiError && requestError.status === 401) {
@@ -58,6 +61,28 @@ export const WorkspacePage: React.FC<WorkspacePageProps> = ({ onNavigate, curren
   useEffect(() => {
     loadWorkspaceData();
   }, []);
+
+  const refreshTimeline = async () => {
+    if (!isAuthenticated) return;
+    setIsRefreshingTimeline(true);
+    try {
+      setMemories(await getMemories());
+      setTimelineUpdatedAt(new Date());
+    } catch (requestError) {
+      if (requestError instanceof ApiError && requestError.status === 401) {
+        setIsAuthenticated(false);
+      }
+    } finally {
+      setIsRefreshingTimeline(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab !== 'timeline' || !isAuthenticated) return;
+    void refreshTimeline();
+    const refreshInterval = window.setInterval(() => void refreshTimeline(), 15_000);
+    return () => window.clearInterval(refreshInterval);
+  }, [activeTab, isAuthenticated]);
 
   const handleSignOut = async () => {
     await logoutSession();
@@ -140,7 +165,14 @@ export const WorkspacePage: React.FC<WorkspacePageProps> = ({ onNavigate, curren
             </div>
           ) : (
             <main className="mx-auto w-full max-w-6xl px-5 py-10 sm:px-8 lg:px-12">
-              {activeTab === 'timeline' && <TimelineView memories={memories} />}
+              {activeTab === 'timeline' && (
+                <TimelineView
+                  memories={memories}
+                  onRefresh={refreshTimeline}
+                  isRefreshing={isRefreshingTimeline}
+                  updatedAt={timelineUpdatedAt}
+                />
+              )}
               {activeTab === 'connections' && <ConnectionsView data={connections} />}
             </main>
           )}
@@ -150,12 +182,37 @@ export const WorkspacePage: React.FC<WorkspacePageProps> = ({ onNavigate, curren
   );
 };
 
-function TimelineView({ memories }: { memories: MemoryItem[] }) {
+function TimelineView({
+  memories,
+  onRefresh,
+  isRefreshing,
+  updatedAt,
+}: {
+  memories: MemoryItem[];
+  onRefresh: () => void;
+  isRefreshing: boolean;
+  updatedAt: Date | null;
+}) {
   return (
     <section>
-      <p className="text-sm text-neutral-500">Community memory</p>
-      <h1 className="mt-2 text-3xl font-medium text-neutral-100 sm:text-4xl">Source timeline</h1>
+      <div className="flex items-start justify-between gap-6">
+        <div>
+          <p className="text-sm text-neutral-500">Community memory</p>
+          <h1 className="mt-2 text-3xl font-medium text-neutral-100 sm:text-4xl">Source timeline</h1>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={isRefreshing}
+          title="Refresh source timeline"
+          className="grid h-9 w-9 place-items-center border border-neutral-800 text-neutral-400 transition-colors hover:border-neutral-600 hover:text-neutral-100 disabled:opacity-40"
+        >
+          <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} aria-hidden="true" />
+        </button>
+      </div>
       <p className="mt-4 max-w-2xl text-lg leading-8 text-neutral-400">Public records currently available to this demo session.</p>
+      <p className="mt-3 max-w-2xl text-sm leading-6 text-neutral-600">Messages that directly query ThreadAgent, and ThreadAgent's replies, are excluded from organizational memory. This keeps questions and generated answers from being reused as evidence.</p>
+      <p className="mt-3 text-xs text-neutral-600">{updatedAt ? `Updated ${updatedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : 'Checking for new records'}</p>
       <div className="mt-10 divide-y divide-neutral-800 border-y border-neutral-800">
         {memories.length === 0 ? (
           <p className="py-10 text-neutral-500">No public records are available yet.</p>

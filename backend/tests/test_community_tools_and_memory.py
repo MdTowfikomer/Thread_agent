@@ -475,9 +475,10 @@ def test_intent_classification():
     c6, _, _, _ = classify_intent_and_routing("hi", ws)
     assert c6 == "GENERAL_KNOWLEDGE"
 
-    # Natural language tool requests
+    # Freeform event questions search ingested, permission-aware announcements.
+    # !events remains the explicit structured-calendar command.
     c7, t7, _, _ = classify_intent_and_routing("When is the next upcoming workshop?", ws)
-    assert c7 == "TOOL_EXECUTION" and t7 == "events"
+    assert c7 == "ORGANIZATIONAL_FACTS" and t7 is None
 
     # Organizational queries
     c8, _, _, _ = classify_intent_and_routing("What was the approved budget for DevFest?", ws)

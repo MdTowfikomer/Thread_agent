@@ -84,9 +84,10 @@ def classify_intent_and_routing(query: str, ws) -> Tuple[str, Optional[str], Opt
         return "TOOL_EXECUTION", "link", arg, role
 
     # 2. Natural language tool queries
-    if any(k in q_lower for k in ("event", "events", "workshop", "workshops", "hackathon", "meetup", "session")):
-        role = next((r for r in ws.roles if r.id == "organizer_lead"), ws.roles[0])
-        return "TOOL_EXECUTION", "events", q_stripped, role
+    # Event details can live in ingested channel announcements even when no
+    # organizer has created a structured event row. Keep freeform event
+    # questions on the ACL-protected retrieval path; !events remains the
+    # explicit command for the structured event calendar.
     if any(k in q_lower for k in ("github", "commit", "commits", "repo", "repository")):
         role = next((r for r in ws.roles if r.id == "tech_lead"), ws.roles[0])
         return "TOOL_EXECUTION", "github", q_stripped, role
@@ -103,7 +104,8 @@ def classify_intent_and_routing(query: str, ws) -> Tuple[str, Optional[str], Opt
         "policy", "attendance", "proposal", "retro", "receipt", "audit", "secret", "private",
         "mariana", "submarine", "protocol", "record", "records", "event announced", "updates event",
         "next workshop", "upcoming workshop", "prerequisite", "prerequisites", "launch", "titan", "project",
-        "channel policy", "ingest", "rsvp", "booth", "check-in", "gate"
+        "channel policy", "ingest", "rsvp", "registration", "deadline", "workshop", "workshops",
+        "hackathon", "meetup", "event details", "booth", "check-in", "gate"
     )
 
     is_org_query = any(ind in q_lower for ind in org_indicators)

@@ -78,7 +78,7 @@ class ConversationTurnStore:
 
         conn = self._get_db_conn()
         if not conn:
-            return True
+            return False
 
         clean_plat = str(platform).lower().replace("channeltype.", "")
         try:
@@ -127,8 +127,6 @@ class ConversationTurnStore:
 
         conn = self._get_db_conn()
         if not conn:
-            turns = self._memory_turns.get(session_key, [])
-            return [{"role": t["role"], "content": t["content"]} for t in turns[-limit:]]
             return []
 
         try:

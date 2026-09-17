@@ -22,6 +22,17 @@ def test_routing_deterministic_general_knowledge():
     assert cat3 in ("ORGANIZATIONAL_FACTS", "TOOL_EXECUTION")
 
 
+def test_event_details_with_a_named_topic_use_organizational_retrieval():
+    ws = get_workspace("gdg_mcet")
+    category, tool, _, _ = classify_intent_and_routing(
+        "What are the details and registration deadline for the RAG workshop?",
+        ws,
+    )
+
+    assert category == "ORGANIZATIONAL_FACTS"
+    assert tool is None
+
+
 def test_general_knowledge_bypasses_retrieval():
     state = GraphState(
         query="what is the state space in RL?",

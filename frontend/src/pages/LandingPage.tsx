@@ -66,7 +66,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenWorkspace }) => 
           <div className="relative mx-auto flex w-full max-w-7xl flex-col justify-end">
             <p className="mb-5 text-sm text-neutral-400">A community agent with a long memory.</p>
             <h1 className="max-w-4xl text-5xl font-semibold leading-[1.04] text-neutral-100 sm:text-6xl lg:text-8xl">
-              The AI joins the work.
+              The AI Agent joins the work.
             </h1>
             <div className="mt-8 grid max-w-3xl gap-7 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
               <p className="max-w-xl text-lg leading-8 text-neutral-300">

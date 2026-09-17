@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, KeyRound } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, KeyRound, Loader2 } from 'lucide-react';
 import { startDemoSession } from '../api';
 import { ThreadLight } from '../components/ThreadLight';
 
@@ -13,15 +13,21 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onAuthenticated }) =
   const [error, setError] = useState<string | null>(null);
 
   const handleContinue = async () => {
+    if (isSubmitting) return;
     setIsSubmitting(true);
     setError(null);
-    const authenticated = await startDemoSession();
-    setIsSubmitting(false);
-    if (authenticated) {
-      onAuthenticated();
-      return;
+    try {
+      const authenticated = await startDemoSession();
+      if (authenticated) {
+        onAuthenticated();
+        return;
+      }
+      setError('Thread could not establish a session. Check that the backend is running and try again.');
+    } catch {
+      setError('Connection failed. Please try again.');
+    } finally {
+      setIsSubmitting(false);
     }
-    setError('Thread could not establish a session. Check that the backend is running and try again.');
   };
 
   return (
@@ -29,7 +35,10 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onAuthenticated }) =
       <ThreadLight className="pointer-events-none absolute inset-0 h-full w-full opacity-55" />
       <div className="relative mx-auto flex w-full max-w-7xl flex-col">
         <header className="flex items-center justify-between">
-          <button onClick={onBack} className="inline-flex items-center gap-2 text-sm text-neutral-400 transition-colors hover:text-neutral-100">
+          <button
+            onClick={onBack}
+            className="inline-flex items-center gap-2 text-sm text-neutral-400 transition-colors hover:text-neutral-100"
+          >
             <ArrowLeft className="h-4 w-4" aria-hidden="true" />
             Back to Thread
           </button>
@@ -39,13 +48,21 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onAuthenticated }) =
         <section className="my-auto grid flex-1 items-center gap-12 py-16 lg:grid-cols-[minmax(0,1fr)_25rem] lg:gap-24">
           <div className="max-w-2xl">
             <p className="text-sm text-neutral-400">ThreadAgent live demo</p>
-            <h1 className="mt-5 text-4xl font-medium leading-tight text-neutral-100 sm:text-6xl">See the context where the work happens.</h1>
+            <h1 className="mt-5 text-4xl font-medium leading-tight text-neutral-100 sm:text-6xl">
+              See the context where the work happens.
+            </h1>
             <p className="mt-6 max-w-xl text-lg leading-8 text-neutral-400">
               Explore the live Discord, Slack, Telegram, and GitHub integrations already connected to ThreadAgent.
             </p>
             <ul className="mt-10 space-y-4 text-sm text-neutral-400">
-              <li className="flex items-center gap-3"><Check className="h-4 w-4 text-neutral-200" aria-hidden="true" /> Ask questions across public community context</li>
-              <li className="flex items-center gap-3"><Check className="h-4 w-4 text-neutral-200" aria-hidden="true" /> Inspect source evidence and connected platforms</li>
+              <li className="flex items-center gap-3">
+                <Check className="h-4 w-4 text-neutral-200" aria-hidden="true" />
+                Ask questions across public community context
+              </li>
+              <li className="flex items-center gap-3">
+                <Check className="h-4 w-4 text-neutral-200" aria-hidden="true" />
+                Inspect source evidence and connected platforms
+              </li>
             </ul>
           </div>
 
@@ -55,15 +72,23 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onAuthenticated }) =
             <p className="mt-3 text-sm leading-6 text-neutral-500">
               No account setup is needed. This opens a one-hour, public-only viewing session for the GDG MCET demo workspace.
             </p>
-            {error && <p className="mt-6 border-l border-neutral-500 pl-3 text-sm leading-6 text-neutral-300">{error}</p>}
+            {error && (
+              <p className="mt-6 border-l border-neutral-600 pl-3 text-sm leading-6 text-neutral-400">
+                {error}
+              </p>
+            )}
             <button
               type="button"
               onClick={handleContinue}
               disabled={isSubmitting}
               className="mt-8 inline-flex w-full items-center justify-between bg-neutral-100 px-4 py-3 text-sm font-medium text-neutral-950 transition-colors hover:bg-white disabled:cursor-wait disabled:opacity-60"
             >
-              {isSubmitting ? 'Opening demo' : 'Open demo workspace'}
-              <ArrowRight className="h-4 w-4" aria-hidden="true" />
+              <span>{isSubmitting ? 'Opening demo...' : 'Open demo workspace'}</span>
+              {isSubmitting ? (
+                <Loader2 className="h-4 w-4 animate-spin text-neutral-950" />
+              ) : (
+                <ArrowRight className="h-4 w-4" aria-hidden="true" />
+              )}
             </button>
           </div>
         </section>

@@ -154,8 +154,10 @@ Channel Discussion Transcript ({len(messages)} messages):
 {transcript}
 """
             try:
+                from app.channels.formatter import coerce_model_text
                 res = llm.invoke(prompt)
-                content = res.content if hasattr(res, "content") else str(res)
+                raw_content = res.content if hasattr(res, "content") else res
+                content = coerce_model_text(raw_content)
                 return f"📝 **Channel Discussion Summary (Past {window_hours}h — {len(messages)} messages):**\n\n{content}"
             except Exception as e:
                 logger.warning(f"LLM summarization failed: {e}")

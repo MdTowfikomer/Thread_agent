@@ -5,8 +5,20 @@
 >  
 > **Thread connects the scattered knowledge of an organization and reconstructs the context behind its work — across Discord, Telegram, Slack, GitHub, documents, people, projects, and decisions.**  
 >  
-> **Live Deployment**: [thread-agent-xi.vercel.app](https://thread-agent-xi.vercel.app)  
-> **Demonstration Environment**: GDG MCET Organization Workspace
+> 🌐 **Live Web App**: [thread-agent-xi.vercel.app](https://thread-agent-xi.vercel.app)  
+> 📺 **Demo Video**: [YouTube Walkthrough (8 mins)](https://youtu.be/rPY4Qk7pzkg) *(Features live web app, multi-platform bots, and PostgreSQL pgvector database)*  
+> 🏢 **Demonstration Environment**: GDG MCET Organization Workspace
+
+---
+
+## 🎬 Demo Video & Live Walkthrough
+
+> 📺 **Watch Full Video Demo**: **[https://youtu.be/rPY4Qk7pzkg](https://youtu.be/rPY4Qk7pzkg)**  
+> 
+> *The video demonstrates:*
+> 1. **Live Web Dashboard** on Vercel with real-time agent state indicators and source citation inspection.
+> 2. **Multi-Channel Integrations**: Interactive queries across Discord and Telegram bots.
+> 3. **PostgreSQL & Supabase Database**: Live demonstration of PostgreSQL tables, `pgvector` embeddings (`vector(768)`), pre-retrieval ACL SQL filters, and audit logs.
 
 ---
 
@@ -44,7 +56,7 @@ Developer communities and fast-moving teams suffer from **institutional amnesia*
                                │  ACL & Scopes │
                                └───────┬───────┘
                                        │
-                              LangGraph Engine
+                               LangGraph Engine
                                        │
                                ┌───────▼───────┐
                                │ Triage Router │
@@ -66,6 +78,73 @@ Developer communities and fast-moving teams suffer from **institutional amnesia*
                                        │
                          Answer + Verified Citations
 ```
+
+---
+
+## 🗄️ PostgreSQL & `pgvector` Engine
+
+Thread uses **PostgreSQL** hosted on **Supabase** with the **`pgvector`** extension as its core storage and retrieval backbone.
+
+```
+                  ┌──────────────────────────────────────────────┐
+                  │         User Query & Active User Scope       │
+                  └──────────────────────┬───────────────────────┘
+                                         │
+                         ┌───────────────▼───────────────┐
+                         │  Generate 768-Dim Embedding   │
+                         │   (Google Gemini / OpenAI)    │
+                         └───────────────┬───────────────┘
+                                         │
+              ┌──────────────────────────▼──────────────────────────┐
+              │             PostgreSQL `hybrid_search()`            │
+              │                                                     │
+              │   1. Pre-Retrieval SQL ACL Filter:                  │
+              │      WHERE organization_id = %s                     │
+              │        AND permission = ANY(scope_array)            │
+              │                                                     │
+              │   2. Dense Vector Match (pgvector Cosine <=>):        │
+              │      ORDER BY embedding <=> query_vector            │
+              │                                                     │
+              │   3. Sparse Lexical Match (tsvector & FTS):         │
+              │      WHERE fts @@ websearch_to_tsquery(%s)          │
+              │                                                     │
+              │   4. Reciprocal Rank Fusion (RRF):                  │
+              │      RRF_Score = 1/(k + Rank_dense) + 1/(k + Rank_lexical) │
+              └──────────────────────────┬──────────────────────────┘
+                                         │
+                         ┌───────────────▼───────────────┐
+                         │   Ranked Verified Candidates  │
+                         │  (Zero Leaked Candidate Rows) │
+                         └───────────────────────────────┘
+```
+
+### Key Highlights of `pgvector` Implementation:
+
+1. **768-Dimensional Embedding Indexing**:
+   Dense vector representations are generated via Google Gemini (`embedding-001`) or OpenAI (`text-embedding-3-small`) and stored directly in the `memory_chunks.embedding` column typed as `vector(768)`. Indexing via **HNSW** (Hierarchical Navigable Small World) provides sub-50ms vector distance lookup.
+
+2. **Pre-Retrieval Scope Isolation**:
+   Unlike standard RAG architectures that run vector nearest-neighbor search first and filter afterwards, Thread executes SQL filtering **before similarity calculation**:
+   ```sql
+   SELECT id, content, provenance, 
+          1 - (embedding <=> query_vector) AS similarity
+   FROM memory_chunks
+   WHERE organization_id = %s 
+     AND permission = ANY(%s) -- Strict Pre-Retrieval ACL Scope
+   ORDER BY embedding <=> query_vector ASC
+   LIMIT %s;
+   ```
+   If a user lacks permission for internal core records, PostgreSQL excludes those rows prior to vector comparison. The query fails-closed and confidential data never enters the LLM context.
+
+3. **Hybrid Search with Reciprocal Rank Fusion (RRF)**:
+   Thread combines dense semantic similarity (`pgvector`) with sparse keyword matching (`tsvector` full-text search) via a custom SQL function `hybrid_search()`. Results are fused using Reciprocal Rank Fusion:
+   $$\text{RRF Score} = \frac{1}{k + \text{Rank}_{\text{dense}}} + \frac{1}{k + \text{Rank}_{\text{lexical}}}$$
+   This ensures precision on exact terminology (e.g., repository names, invoice numbers) while retaining high-level semantic retrieval.
+
+4. **Normalized Schema Architecture**:
+   - `memory_chunks`: Stores text chunks, vector embeddings (`vector(768)`), FTS vectors (`tsvector`), metadata, and ACL permissions.
+   - `source_records`: Tracks source provenance (Discord message ID, Telegram post ID, GitHub PR URL).
+   - `conversations` & `audit_logs`: Maintains execution history, turn records, and delivery receipts.
 
 ---
 
@@ -92,12 +171,12 @@ Developer communities and fast-moving teams suffer from **institutional amnesia*
 
 ---
 
-## 🚀 Quickstart Guide
+## 🚀 Quickstart & Setup Guide
 
 ### Prerequisites
 - **Node.js**: 20+
 - **Python**: 3.11+
-- **Database**: PostgreSQL / Supabase (Optional for full DB persistence)
+- **Database**: PostgreSQL with `pgvector` extension enabled (Supabase recommended)
 
 ---
 
@@ -127,7 +206,7 @@ Copy `.env.example` to `.env` and fill in your keys:
 GEMINI_API_KEY=your-gemini-api-key
 OPENAI_API_KEY=your-openai-api-key
 
-# Database (Optional - Supabase / PostgreSQL)
+# Database (Supabase / PostgreSQL with pgvector)
 SUPABASE_DB_URL=postgresql://postgres:password@db.supabase.co:5432/postgres
 
 # Bot Integration Tokens (Optional)
@@ -149,7 +228,7 @@ npm install
 
 ### 3. Run Development Environment
 
-You can start both backend and frontend using `run_dev.bat` on Windows, or manually:
+Start backend and frontend services:
 
 ```bash
 # Terminal 1 — Backend API Server (Port 8000)
@@ -190,14 +269,14 @@ Try these queries in the **GDG MCET Workspace**:
 3. **Swag Vendor Budget (Internal Core Scope)**:
    > *"What is our internal budget for attendee t-shirts and swag?"*  
    > *Result (as Organizer):* Routes to Finance Lead Karthik Verma $\rightarrow$ retrieves internal budget notes.  
-   > *Result (as Community Member):* Pre-Retrieval ACL blocks the query before vector search, ensuring confidential data remains secure.
+   > *Result (as Community Member):* Pre-Retrieval ACL blocks the query in SQL before `pgvector` similarity calculation, ensuring confidential data remains completely safe.
 
 ---
 
 ## 📦 Deployment Overview
 
 - **Frontend**: Deployed on [Vercel](https://thread-agent-xi.vercel.app) using Vite production build (`npm run build`).
-- **Backend API & Gateway**: Containerized FastAPI application configured for deployment on Railway / Render / Oracle Cloud with Supabase Database bindings.
+- **Backend API & Gateway**: Containerized FastAPI application configured for deployment on Railway / Render with Supabase PostgreSQL & `pgvector` bindings.
 
 ---
 

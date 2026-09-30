@@ -7,15 +7,17 @@
 >  
 > 🌐 **Live Web App**: [thread-agent-xi.vercel.app](https://thread-agent-xi.vercel.app)  
 > 📺 **Demo Video**: [YouTube Walkthrough (8 mins)](https://youtu.be/rPY4Qk7pzkg) *(Features live web app, multi-platform bots, and PostgreSQL pgvector database)*  
+> 📝 **Medium Article**: [Why Naive RAG Fails at Organizational Memory](https://medium.com/@mdtowfikomer/why-naive-rag-fails-at-organizational-memory-and-how-we-built-a-context-reconstruction-agent-4cbb0c69a378)  
 > 🏢 **Demonstration Environment**: GDG MCET Organization Workspace
 
 ---
 
-## 🎬 Demo Video & Live Walkthrough
+## 🎬 Demo Video, Live Walkthrough & Article
 
 > 📺 **Watch Full Video Demo**: **[https://youtu.be/rPY4Qk7pzkg](https://youtu.be/rPY4Qk7pzkg)**  
+> 📝 **Read the Medium Article**: **[Why Naive RAG Fails at Organizational Memory](https://medium.com/@mdtowfikomer/why-naive-rag-fails-at-organizational-memory-and-how-we-built-a-context-reconstruction-agent-4cbb0c69a378)**  
 > 
-> *The video demonstrates:*
+> *The video & article demonstrate:*
 > 1. **Live Web Dashboard** on Vercel with real-time agent state indicators and source citation inspection.
 > 2. **Multi-Channel Integrations**: Interactive queries across Discord and Telegram bots.
 > 3. **PostgreSQL & Supabase Database**: Live demonstration of PostgreSQL tables, `pgvector` embeddings (`vector(768)`), pre-retrieval ACL SQL filters, and audit logs.

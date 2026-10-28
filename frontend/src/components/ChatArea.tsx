@@ -1,12 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AssistantRuntimeProvider, type ChatModelAdapter, useLocalRuntime } from '@assistant-ui/react';
 import { ArrowUp, FileText, Sparkles } from 'lucide-react';
-import { ApiError, sendChatMessage } from '../api';
-import { Citation } from '../types';
+import { ApiError, sendChatMessage, sendChatMessageStream } from '../api';
+import { Citation, AgentTraceStep, ToolCallStep } from '../types';
 import { EvidenceRail } from './EvidenceRail';
+import { TraceInspector } from './TraceInspector';
+import { ToolTimeline } from './ToolTimeline';
 
 interface ChatAreaProps {
   workspaceName: string;
+  workspaceId?: string;
+  canInspectTrace?: boolean;
   onSelectPromptQuery?: string | null;
   onClearSelectedPrompt?: () => void;
   onUnauthorized?: () => void;
@@ -22,15 +26,19 @@ type ChatMessage = {
   receipt_id?: string;
   sufficient_evidence?: boolean;
   isPending?: boolean;
+  trace?: AgentTraceStep[];
+  traceId?: string;
+  activeStage?: ToolCallStep;
+  stages?: ToolCallStep[];
 };
 
 function getQueryProgressMessage(query: string): string {
   const normalized = query.toLowerCase();
   if (/(github|commit|repo|repository|pull request|issue)/.test(normalized)) return 'Checking the connected repository activity.';
   if (/(event|workshop|hackathon|meetup|rsvp)/.test(normalized)) return 'Checking published events and registration details.';
-  if (/(what can thread|what do you do|help me with)/.test(normalized)) return 'Checking the tools and community context available to you.';
+  if (/(what can thread|what do you do|help me with)/.test(normalized)) return 'Checking the tools and organizational context available to you.';
   if (/(summary|summarize|recap)/.test(normalized)) return 'Reviewing the available conversation context.';
-  return 'Checking the available community context.';
+  return 'Checking the available organizational context.';
 }
 
 function renderInlineMarkdown(value: string): React.ReactNode[] {
@@ -62,6 +70,8 @@ const MarkdownMessage: React.FC<{ content: string }> = ({ content }) => (
 
 export const ChatArea: React.FC<ChatAreaProps> = ({
   workspaceName,
+  workspaceId,
+  canInspectTrace = false,
   onSelectPromptQuery,
   onClearSelectedPrompt,
   onUnauthorized,
@@ -84,44 +94,122 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           .map((part) => part.text || '')
           .join('\n');
 
+      const assistantId = `assistant-${Date.now()}`;
+      let accumulatedText = '';
+      const stagesList: ToolCallStep[] = [];
+
+      const initialPendingMessage: ChatMessage = {
+        id: assistantId,
+        role: 'assistant',
+        content: '',
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        isPending: true,
+        stages: [],
+        activeStage: {
+          step: 'triage_router',
+          label: 'Intent routing',
+          status: 'running',
+          message: 'Analyzing query intent...'
+        }
+      };
+
+      const pendingMessageId = pendingMessageIdRef.current;
+      setMessagesList((current) => pendingMessageId
+        ? current.map((m) => m.id === pendingMessageId ? initialPendingMessage : m)
+        : [...current, initialPendingMessage]);
+      pendingMessageIdRef.current = assistantId;
+
       try {
-        const response = await sendChatMessage(query);
-        const assistantId = `assistant-${Date.now()}`;
+        const response = await sendChatMessageStream(query, (event) => {
+          if (event.type === 'stage' || event.type === 'tool_call') {
+            const stepInfo: ToolCallStep = {
+              step: event.step,
+              label: event.label,
+              status: event.status,
+              message: event.message,
+              tool: 'tool' in event ? event.tool : undefined,
+              toolArgs: 'args' in event ? event.args : undefined,
+              intent: 'intent' in event ? event.intent : undefined,
+              role: 'role' in event ? event.role : undefined,
+              count: 'count' in event ? event.count : undefined,
+            };
+            const existingIdx = stagesList.findIndex(s => s.step === event.step && (!('tool' in event) || s.tool === event.tool));
+            if (existingIdx >= 0) {
+              stagesList[existingIdx] = stepInfo;
+            } else {
+              stagesList.push(stepInfo);
+            }
+            setMessagesList((current) =>
+              current.map((msg) =>
+                msg.id === assistantId
+                  ? { ...msg, activeStage: stepInfo, stages: [...stagesList] }
+                  : msg
+              )
+            );
+          } else if (event.type === 'token') {
+            accumulatedText += event.text;
+            setMessagesList((current) =>
+              current.map((msg) =>
+                msg.id === assistantId
+                  ? { ...msg, content: accumulatedText }
+                  : msg
+              )
+            );
+          }
+        });
+
         const assistantMessage: ChatMessage = {
           id: assistantId,
           role: 'assistant',
-          content: response.answer,
+          content: response.answer || accumulatedText,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           citations: response.citations || [],
           confidence_score: response.confidence_score,
           receipt_id: response.retrieval_receipt_id || response.receipt?.receipt_id,
           sufficient_evidence: response.sufficient_evidence ?? Boolean(response.citations?.length),
+          trace: response.trace,
+          traceId: response.trace_id,
+          isPending: false,
+          stages: stagesList,
         };
-        const pendingMessageId = pendingMessageIdRef.current;
-        setMessagesList((current) => pendingMessageId
-          ? current.map((message) => message.id === pendingMessageId ? assistantMessage : message)
-          : [...current, assistantMessage]);
+
+        setMessagesList((current) =>
+          current.map((message) => message.id === assistantId ? assistantMessage : message)
+        );
         pendingMessageIdRef.current = null;
         setActiveMessageId(assistantId);
-        return { content: [{ type: 'text', text: response.answer }] };
+        return { content: [{ type: 'text', text: response.answer || accumulatedText }] };
       } catch (error: unknown) {
         if (error instanceof ApiError && error.status === 401) onUnauthorized?.();
-        const assistantId = `error-${Date.now()}`;
-        const message = error instanceof Error ? error.message : 'Thread could not complete that request.';
         const pendingMessageId = pendingMessageIdRef.current;
+        if (accumulatedText.trim().length > 0) {
+          setMessagesList((current) =>
+            current.map((msg) =>
+              msg.id === assistantId
+                ? { ...msg, isPending: false, content: accumulatedText, stages: stagesList }
+                : msg
+            )
+          );
+          pendingMessageIdRef.current = null;
+          setActiveMessageId(assistantId);
+          return { content: [{ type: 'text', text: accumulatedText }] };
+        }
+        const errorAssistantId = `error-${Date.now()}`;
+        const message = error instanceof Error ? error.message : 'Thread could not complete that request.';
         const errorMessage: ChatMessage = {
-          id: assistantId,
+          id: errorAssistantId,
           role: 'assistant',
           content: message,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           citations: [],
           sufficient_evidence: false,
+          traceId: error instanceof ApiError ? error.traceId : undefined,
         };
         setMessagesList((current) => pendingMessageId
           ? current.map((messageItem) => messageItem.id === pendingMessageId ? errorMessage : messageItem)
           : [...current, errorMessage]);
         pendingMessageIdRef.current = null;
-        setActiveMessageId(assistantId);
+        setActiveMessageId(errorAssistantId);
         return { content: [{ type: 'text', text: message }] };
       } finally {
         setLoading(false);
@@ -200,10 +288,33 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                         <span>{message.role === 'user' ? 'You' : 'ThreadAgent'}</span>
                         <span>{message.timestamp}</span>
                       </div>
-                      <div className={`mt-3 text-base leading-7 ${message.role === 'user' ? 'border-l border-neutral-700 pl-4 text-neutral-300' : message.isPending ? 'text-neutral-400' : 'text-neutral-100'}`}>
+                      {/* Live Tool Calling Timeline while generating */}
+                      {message.isPending && (
+                        <ToolTimeline
+                          stages={message.stages && message.stages.length > 0 ? message.stages : (message.activeStage ? [message.activeStage] : [])}
+                          isPending={true}
+                          defaultExpanded={true}
+                        />
+                      )}
+
+                      <div className={`mt-3 text-base leading-7 ${message.role === 'user' ? 'border-l border-neutral-700 pl-4 text-neutral-300' : message.isPending ? 'text-neutral-300' : 'text-neutral-100'}`}>
                         <MarkdownMessage content={message.content} />
+                        {message.isPending && !message.content && (
+                          <span className="inline-block animate-pulse text-neutral-500 text-sm">Thinking...</span>
+                        )}
                       </div>
-                      {message.isPending && <p className="mt-3 text-xs text-neutral-600">This may take a moment for longer answers.</p>}
+
+                      {/* Completed Tool Calling Timeline */}
+                      {!message.isPending && message.role === 'assistant' && message.stages && message.stages.length > 0 && (
+                        <ToolTimeline
+                          stages={message.stages}
+                          isPending={false}
+                          defaultExpanded={message.stages.some(s => Boolean(s.tool))}
+                        />
+                      )}
+
+                      {canInspectTrace && workspaceId && message.traceId && <TraceInspector orgId={workspaceId} traceId={message.traceId} />}
+                      {message.trace?.some(step => step.step === 'model_usage') && <details className="mt-4 text-xs text-neutral-400"><summary className="min-h-8 cursor-pointer py-2">Model usage</summary><ul className="mt-2 space-y-3 border-l border-neutral-800 pl-3">{message.trace.filter(step => step.step === 'model_usage').map((step, index) => <li key={index}><p className="text-neutral-300">{step.model_name} · {step.operation}</p><p className="mt-1 tabular-nums">{step.input_tokens ?? 0} input / {step.output_tokens ?? 0} output tokens · {step.is_estimated ? 'Estimated' : 'Provider-reported'} · {Math.round(step.latency_ms ?? 0)} ms</p></li>)}</ul><p className="mt-3">Cost is not estimated. Check your provider dashboard for charges.</p></details>}
                       {message.role === 'assistant' && message.citations && message.citations.length > 0 && (
                         <button
                           onClick={() => {
@@ -232,7 +343,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   type="text"
                   value={input}
                   onChange={(event) => setInput(event.target.value)}
-                  placeholder="Ask Thread anything about this community"
+                  placeholder="Ask Thread about your organization"
                   disabled={loading}
                   className="min-w-0 flex-1 bg-transparent px-4 py-4 text-base text-neutral-100 outline-none placeholder:text-neutral-600 disabled:opacity-50"
                 />

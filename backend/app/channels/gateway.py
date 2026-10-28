@@ -111,7 +111,7 @@ class DiscordThreadClient(discord.Client):
 
     async def on_message(self, message: discord.Message):
         # 1. Filter and queue live-message ingestion into bounded queue (safely drop if full or unbound)
-        self.bot_service.queue_message_for_ingestion(message)
+        await self.bot_service.queue_message_for_ingestion_async(message)
         # 2. Immediately await mention reply flow (remains responsive even if queue is saturated)
         await self.bot_service.handle_discord_mention_reply(message, self)
 
@@ -232,23 +232,45 @@ class DiscordGatewayBot:
         self.repository.save_record_and_chunks(record, chunks)
         return record, chunks, receipt
 
-    async def handle_discord_mention_reply(self, message: discord.Message, client: discord.Client):
-        """Handle mention and direct interaction replies for Discord messages."""
+    def _bound_organization_for_message(self, message):
+        """Synchronous authorization lookup; async callers must offload it."""
         if getattr(message.author, "bot", False) or not message.guild:
-            return
-
+            return None
         guild_id = str(message.guild.id)
         org_id = self.installation_store.get_organization_for_guild(guild_id)
         if not org_id:
-            return
-
+            return None
         from app.channels.policy import channel_policy_store
         policy = channel_policy_store.get_policy(org_id, ChannelType.DISCORD, str(message.channel.id), guild_id)
         if not policy or not policy.is_active:
-            logger.info(
-                f"[Discord Gateway] Drop mention: channel {message.channel.id} in guild {guild_id} "
-                f"has no active server-owned ChannelPolicy."
-            )
+            return None
+        return org_id
+
+    def _process_mention_query(self, *, org_id, guild_id, channel_id, message_id,
+                               author_id, author_name, display_name, query):
+        """Run cold imports, identity/database work and inference in a worker thread."""
+        from app.channels.inbound_service import inbound_agent_query_service
+        from app.identity.service import identity_service
+        from app.core.membership import membership_store
+        from app.core.auth import AuthenticatedPrincipal
+
+        inbound_agent_query_service.mark_agent_message(message_id)
+        link = identity_service.resolve_identity(
+            organization_id=org_id, channel_type=ChannelType.DISCORD,
+            account_id=author_id, username=author_name, display_name=display_name,
+        )
+        access_context = membership_store.derive_access_context(user_id=link.person_id, organization_id=org_id)
+        principal = AuthenticatedPrincipal(user_id=link.person_id, organization_id=org_id, access_context=access_context)
+        return inbound_agent_query_service.process_and_deliver(
+            principal=principal, platform=ChannelType.DISCORD,
+            destination_id=channel_id, query=query,
+            idempotency_key=f"discord_reply_{guild_id}_{channel_id}_{message_id}",
+            triggering_message_id=message_id,
+        )
+
+    async def handle_discord_mention_reply(self, message: discord.Message, client: discord.Client):
+        """Keep Discord socket operations on the loop and blocking work off it."""
+        if getattr(message.author, "bot", False) or not message.guild:
             return
 
         bot_user = client.user
@@ -269,8 +291,10 @@ class DiscordGatewayBot:
         if not (is_bot_mentioned or is_reply_to_bot):
             return
 
-        from app.channels.inbound_service import inbound_agent_query_service
-        inbound_agent_query_service.mark_agent_message(str(message.id))
+        org_id = await asyncio.to_thread(self._bound_organization_for_message, message)
+        if not org_id:
+            return
+        guild_id = str(message.guild.id)
 
         import re
         clean_query = re.sub(rf"<@!?&?{re.escape(str(bot_user.id))}>", "", message.content)
@@ -278,47 +302,21 @@ class DiscordGatewayBot:
         clean_query = re.sub(r"@ThreadAgent\b", "", clean_query, flags=re.IGNORECASE)
         clean_query = re.sub(r"@Thread\b", "", clean_query, flags=re.IGNORECASE).strip()
         if not clean_query:
-            await message.reply("Hello! Ask me any question about GDG MCET records and I'll find grounded evidence.", mention_author=False)
+            await message.reply("Hello! Ask me any question about your workspace's records and I'll find grounded evidence.", mention_author=False)
             return
 
         async with message.channel.typing():
             try:
-                from app.identity.service import identity_service
-                from app.core.membership import membership_store
-                from app.core.auth import AuthenticatedPrincipal
-                from app.core.canonical import PermissionLevel
-
                 author_id = str(message.author.id)
                 author_name = str(getattr(message.author, "name", None) or "Discord User")
                 display_name = str(getattr(message.author, "display_name", None) or author_name)
 
-                link = identity_service.resolve_identity(
-                    organization_id=org_id,
-                    channel_type=ChannelType.DISCORD,
-                    account_id=author_id,
-                    username=author_name,
-                    display_name=display_name,
-                )
-                access_context = membership_store.derive_access_context(
-                    user_id=link.person_id,
-                    organization_id=org_id,
-                )
-                principal = AuthenticatedPrincipal(
-                    user_id=link.person_id,
-                    organization_id=org_id,
-                    access_context=access_context,
-                )
-
-                reply_idempotency_key = f"discord_reply_{guild_id}_{message.channel.id}_{message.id}"
-
                 send_result = await asyncio.to_thread(
-                    inbound_agent_query_service.process_and_deliver,
-                    principal=principal,
-                    platform=ChannelType.DISCORD,
-                    destination_id=str(message.channel.id),
+                    self._process_mention_query,
+                    org_id=org_id, guild_id=guild_id, channel_id=str(message.channel.id),
+                    message_id=str(message.id), author_id=author_id,
+                    author_name=author_name, display_name=display_name,
                     query=clean_query,
-                    idempotency_key=reply_idempotency_key,
-                    triggering_message_id=str(message.id)
                 )
 
                 if send_result.get("status") == "insufficient_evidence":
@@ -329,7 +327,7 @@ class DiscordGatewayBot:
             except PermissionError as pe:
                 logger.warning(f"Discord ACL rejected send for message {message.id}: {pe}")
                 await message.reply(
-                    f"⚠️ Access restriction: {pe}",
+                    f"Access restriction: {pe}",
                     mention_author=False
                 )
             except Exception as exc:
@@ -442,20 +440,17 @@ class DiscordGatewayBot:
         Filters bot messages, unknown guilds, and unbound channels before queueing.
         Safely drops excess messages when queue is full with structured warning logging.
         """
-        if getattr(message.author, "bot", False) or not message.guild:
+        if not self._bound_organization_for_message(message):
             return False
+        return self._enqueue_message_for_ingestion(message)
 
-        guild_id = str(message.guild.id)
-        org_id = self.installation_store.get_organization_for_guild(guild_id)
-        if not org_id:
+    async def queue_message_for_ingestion_async(self, message: discord.Message) -> bool:
+        if not await asyncio.to_thread(self._bound_organization_for_message, message):
             return False
+        return self._enqueue_message_for_ingestion(message)
 
-        # Channel policy pre-check: unbound channels must not be ingested
-        from app.channels.policy import channel_policy_store
-        policy = channel_policy_store.get_policy(org_id, ChannelType.DISCORD, str(message.channel.id), guild_id)
-        if not policy or not policy.is_active:
-            return False
-
+    def _enqueue_message_for_ingestion(self, message: discord.Message) -> bool:
+        # asyncio queues and task creation must stay on the event-loop thread.
         self._ensure_workers_started()
 
         try:
@@ -465,7 +460,7 @@ class DiscordGatewayBot:
             self._dropped_messages_count += 1
             logger.warning(
                 f"[Discord Gateway] Ingestion queue full ({self.ingestion_queue.maxsize}). Dropping message: "
-                f"message_id={message.id} guild_id={guild_id} channel_id={message.channel.id} "
+                f"message_id={message.id} guild_id={message.guild.id} channel_id={message.channel.id} "
                 f"dropped_total={self._dropped_messages_count}"
             )
             return False
@@ -707,6 +702,15 @@ def try_acquire_gateway_advisory_lock(fail_on_db_error: bool = False) -> Optiona
             raise RuntimeError(msg)
         return None
 
+    db_url = db_url.strip()
+    if db_url.startswith(("'", '"')) or db_url.endswith(("'", '"')):
+        msg = "[Discord Gateway] PostgreSQL error checking advisory lock: remove surrounding quotes from SUPABASE_DB_URL/DATABASE_URL in the hosting environment settings."
+        logger.error(msg)
+        if fail_on_db_error:
+            raise RuntimeError(msg) from None
+        return None
+
+    conn = None
     try:
         import psycopg2
         conn = psycopg2.connect(db_url)
@@ -723,11 +727,18 @@ def try_acquire_gateway_advisory_lock(fail_on_db_error: bool = False) -> Optiona
                 logger.warning(f"[Discord Gateway] Advisory lock ({DISCORD_GATEWAY_ADVISORY_LOCK_ID}) is held by an active peer instance. Standby mode.")
                 conn.close()
                 return None
-    except Exception as e:
-        msg = f"[Discord Gateway] PostgreSQL error checking advisory lock: {e}"
+    except Exception:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        # Driver exceptions can echo full DSNs including passwords. Suppress the
+        # original exception chain as well as its text in operator-facing logs.
+        msg = "[Discord Gateway] PostgreSQL error checking advisory lock: check the database URL, credentials, and network availability."
         logger.error(msg)
         if fail_on_db_error:
-            raise RuntimeError(msg) from e
+            raise RuntimeError(msg) from None
         return None
 
 
@@ -739,5 +750,5 @@ def release_gateway_advisory_lock(conn: Any) -> None:
                 cur.execute("SELECT pg_advisory_unlock(%s);", (DISCORD_GATEWAY_ADVISORY_LOCK_ID,))
             conn.close()
             logger.info(f"[Discord Gateway] Released PostgreSQL advisory lock ({DISCORD_GATEWAY_ADVISORY_LOCK_ID}).")
-        except Exception as e:
-            logger.warning(f"[Discord Gateway] Error releasing advisory lock: {e}")
+        except Exception:
+            logger.warning("[Discord Gateway] Error releasing advisory lock; database details omitted.")

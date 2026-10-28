@@ -1,5 +1,6 @@
 import os
 import logging
+import hashlib
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
 
@@ -43,9 +44,20 @@ class ConversationTurnStore:
         try:
             import psycopg2
             return psycopg2.connect(db_url)
-        except Exception as e:
-            logger.error(f"ConversationTurnStore connection failed: {e}")
+        except Exception:
+            logger.error("Conversation history connection unavailable; connection details withheld.")
             return None
+
+    @staticmethod
+    def permission_session_key(platform, destination, user_id, allowed_scopes):
+        base = ConversationTurnStore.format_session_key(platform, destination, user_id)
+        from app.tenancy.repository import tenant_repository
+        if not tenant_repository.configured:
+            return base
+        scopes = '|'.join(sorted(scope.value if hasattr(scope, 'value') else str(scope) for scope in allowed_scopes))
+        # A downgraded user starts a fresh context window; previous internal
+        # answers must not be fed back into a lower-permission model invocation.
+        return f'{base}:scope:{hashlib.sha256(scopes.encode()).hexdigest()[:12]}'
 
     def record_turn(
         self,
@@ -121,7 +133,7 @@ class ConversationTurnStore:
         if organization_id and (":" in organization_id) and (":" not in session_key):
             session_key, organization_id = organization_id, session_key
 
-        effective_org = organization_id or "gdg_mcet"
+        effective_org = organization_id
         if not effective_org or not session_key:
             return []
 

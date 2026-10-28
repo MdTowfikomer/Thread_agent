@@ -1,103 +1,47 @@
-import React, { useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, KeyRound, Loader2 } from 'lucide-react';
-import { startDemoSession } from '../api';
-import { ThreadLight } from '../components/ThreadLight';
+import React, { useRef, useState } from 'react';
+import { ArrowLeft, Eye, EyeOff } from 'lucide-react';
+import { startDemoSession, v2Request } from '../api';
 
-interface AuthPageProps {
-  onBack: () => void;
-  onAuthenticated: () => void;
-}
+interface AuthPageProps { onBack: () => void; onAuthenticated: () => void }
 
 export const AuthPage: React.FC<AuthPageProps> = ({ onBack, onAuthenticated }) => {
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [signup, setSignup] = useState(false);
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [visible, setVisible] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState('');
+  const alert = useRef<HTMLParagraphElement>(null);
 
-  const handleContinue = async () => {
-    if (isSubmitting) return;
-    setIsSubmitting(true);
-    setError(null);
-    try {
-      const authenticated = await startDemoSession();
-      if (authenticated) {
-        onAuthenticated();
-        return;
-      }
-      setError('Thread could not establish a session. Check that the backend is running and try again.');
-    } catch {
-      setError('Connection failed. Please try again.');
-    } finally {
-      setIsSubmitting(false);
-    }
+  const perform = async (work: () => Promise<void>) => {
+    setPending(true); setError('');
+    try { await work(); onAuthenticated(); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Could not sign in.'); requestAnimationFrame(() => alert.current?.focus()); }
+    finally { setPending(false); }
+  };
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    void perform(async () => { await v2Request(signup ? '/auth/signup' : '/auth/login', { method: 'POST', body: JSON.stringify({ email, password, ...(signup ? { name } : {}) }) }); });
   };
 
-  return (
-    <main className="relative flex min-h-screen overflow-hidden bg-[#0a0a0a] px-5 py-5 text-neutral-200 sm:p-8">
-      <ThreadLight className="pointer-events-none absolute inset-0 h-full w-full opacity-55" />
-      <div className="relative mx-auto flex w-full max-w-7xl flex-col">
-        <header className="flex items-center justify-between">
-          <button
-            onClick={onBack}
-            className="inline-flex items-center gap-2 text-sm text-neutral-400 transition-colors hover:text-neutral-100"
-          >
-            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-            Back to Thread
-          </button>
-          <span className="text-base font-semibold text-neutral-100">THREAD</span>
-        </header>
-
-        <section className="my-auto grid flex-1 items-center gap-12 py-16 lg:grid-cols-[minmax(0,1fr)_25rem] lg:gap-24">
-          <div className="max-w-2xl">
-            <p className="text-sm text-neutral-400">ThreadAgent live demo</p>
-            <h1 className="mt-5 text-4xl font-medium leading-tight text-neutral-100 sm:text-6xl">
-              See the context where the work happens.
-            </h1>
-            <p className="mt-6 max-w-xl text-lg leading-8 text-neutral-400">
-              Explore the live Discord, Slack, Telegram, and GitHub integrations already connected to ThreadAgent.
-            </p>
-            <ul className="mt-10 space-y-4 text-sm text-neutral-400">
-              <li className="flex items-center gap-3">
-                <Check className="h-4 w-4 text-neutral-200" aria-hidden="true" />
-                Ask questions across public community context
-              </li>
-              <li className="flex items-center gap-3">
-                <Check className="h-4 w-4 text-neutral-200" aria-hidden="true" />
-                Inspect source evidence and connected platforms
-              </li>
-            </ul>
-          </div>
-
-          <div className="border-y border-neutral-800 py-8 lg:border-x lg:px-8">
-            <KeyRound className="h-5 w-5 text-neutral-300" aria-hidden="true" />
-            <h2 className="mt-6 text-2xl font-medium text-neutral-100">Explore live demo</h2>
-            <p className="mt-3 text-sm leading-6 text-neutral-500">
-              No account setup is needed. This opens a one-hour, public-only viewing session for the GDG MCET demo workspace.
-            </p>
-            {error && (
-              <p className="mt-6 border-l border-neutral-600 pl-3 text-sm leading-6 text-neutral-400">
-                {error}
-              </p>
-            )}
-            <button
-              type="button"
-              onClick={handleContinue}
-              disabled={isSubmitting}
-              className="mt-8 inline-flex w-full items-center justify-between bg-neutral-100 px-4 py-3 text-sm font-medium text-neutral-950 transition-colors hover:bg-white disabled:cursor-wait disabled:opacity-60"
-            >
-              <span>{isSubmitting ? 'Opening demo...' : 'Open demo workspace'}</span>
-              {isSubmitting ? (
-                <Loader2 className="h-4 w-4 animate-spin text-neutral-950" />
-              ) : (
-                <ArrowRight className="h-4 w-4" aria-hidden="true" />
-              )}
-            </button>
-          </div>
-        </section>
-
-        <footer className="flex flex-wrap justify-between gap-3 border-t border-neutral-800 pt-5 text-sm text-neutral-600">
-          <span>ThreadAgent</span>
-          <span>Context where the work happens.</span>
-        </footer>
-      </div>
-    </main>
-  );
+  return <main className="min-h-screen bg-[#0a0a0a] px-5 py-8 text-neutral-200 sm:px-8">
+    <button onClick={onBack} className="inline-flex min-h-11 items-center gap-2 text-sm text-neutral-400 hover:text-white"><ArrowLeft size={16} aria-hidden="true" />Back to Thread</button>
+    <section className="mx-auto flex min-h-[80svh] max-w-[400px] flex-col justify-center py-10">
+      <p className="text-sm font-medium text-neutral-400">Thread</p>
+      <h1 className="mt-5 text-3xl tracking-tight">{signup ? 'Create your account' : 'Welcome back'}</h1>
+      <p className="mt-3 text-sm leading-6 text-neutral-400">Your organization’s knowledge, connected to the work.</p>
+      <form onSubmit={submit} className="mt-8 space-y-5">
+        {signup && <label className="v2-label">Name<input className="v2-input" autoComplete="name" required maxLength={100} value={name} onChange={e => setName(e.target.value)} /></label>}
+        <label className="v2-label">Email<input className="v2-input" type="email" autoComplete="email" required value={email} onChange={e => setEmail(e.target.value)} /></label>
+        <label className="v2-label" htmlFor="account-password">Password</label>
+        <div className="relative"><input id="account-password" className="v2-input pr-12" type={visible ? 'text' : 'password'} autoComplete={signup ? 'new-password' : 'current-password'} minLength={signup ? 12 : 1} maxLength={1024} required value={password} onChange={e => setPassword(e.target.value)} /><button type="button" className="absolute right-1 top-1 grid h-10 w-10 place-items-center text-neutral-400" aria-label={visible ? 'Hide password' : 'Show password'} onClick={() => setVisible(!visible)}>{visible ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}</button></div>
+        {signup && <p className="text-xs text-neutral-400">Use at least 12 characters. Next, create a workspace or accept an invitation.</p>}
+        {error && <p ref={alert} tabIndex={-1} role="alert" className="text-sm text-red-300">{error}</p>}
+        <button disabled={pending} className="v2-primary w-full">{pending ? 'Please wait…' : signup ? 'Create account' : 'Sign in'}</button>
+      </form>
+      <button className="mt-6 min-h-11 text-sm text-neutral-300 underline underline-offset-4" onClick={() => { setSignup(!signup); setError(''); }}>{signup ? 'Already have an account? Sign in' : 'New to Thread? Create an account'}</button>
+      {!new URLSearchParams(window.location.search).has('returnTo') && <div className="mt-8 border-t border-neutral-800 pt-6"><button disabled={pending} className="v2-secondary w-full" onClick={() => void perform(async () => { if (!await startDemoSession()) throw new Error('The public demo is unavailable. Sign in to your account instead.'); })}>Explore the MCET public demo</button><p className="mt-3 text-xs leading-5 text-neutral-500">Demo access is separate from your account and includes public demo records only.</p></div>}
+    </section>
+  </main>;
 };

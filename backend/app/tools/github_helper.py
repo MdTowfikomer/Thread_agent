@@ -173,7 +173,7 @@ class GitHubHelper:
                 return f"No commits found for repository **{repo_name}**."
 
             exact_commits = commits[:count]
-            lines = [f"🐙 **Recent GitHub Commits for [{repo_name}](https://github.com/{repo_name})** (showing {len(exact_commits)}):\n"]
+            lines = [f"**Recent GitHub Commits for [{repo_name}](https://github.com/{repo_name})** (showing {len(exact_commits)}):\n"]
             for idx, c in enumerate(exact_commits, 1):
                 author = c.get("author") or "Unknown"
                 date_str = c.get("date") or ""
@@ -189,9 +189,9 @@ class GitHubHelper:
         repo_url = repo_info.get("url") or f"https://github.com/{repo_name}"
 
         return (
-            f"🐙 **Official GDG MCET GitHub Repository**\n\n"
+            f"**Official Repository Documentation**\n\n"
             f"**Repository**: [{repo_name}]({repo_url})\n\n"
-            f"### 🛠 How to Contribute:\n"
+            f"### How to Contribute:\n"
             f"1. **Fork or Clone**: `git clone {repo_url}.git`\n"
             f"2. **Create a Feature Branch**: `git checkout -b feat/your-feature-name`\n"
             f"3. **Local Setup**: Install requirements and activate Python virtual environment (`.venv`)\n"

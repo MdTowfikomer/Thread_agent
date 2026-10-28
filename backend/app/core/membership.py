@@ -1,5 +1,6 @@
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
+import os
 import uuid
 from app.core.canonical import (
     Person,
@@ -23,7 +24,8 @@ class MembershipStore:
         self._org_user_to_member: Dict[str, str] = {}     # f"{org_id}:{user_id}" -> member_id
         self._roles: Dict[str, List[RoleAssignment]] = {}  # member_id -> List[RoleAssignment]
         self._identity_mappings: Dict[str, IdentityMapping] = {}  # f"{org_id}:{channel_type.value}:{external_user_id}" -> IdentityMapping
-        self._init_default_members()
+        if os.getenv("THREAD_ALLOW_OFFLINE_IDENTITY") == "1":
+            self._init_default_members()
 
     def _init_default_members(self):
         # 1. Lead Organizer: Arjun Sharma
@@ -147,6 +149,17 @@ class MembershipStore:
         external_username: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> IdentityMapping:
+        from app.tenancy.repository import tenant_repository
+        if tenant_repository.configured:
+            identity = self.get_identity_context(internal_user_id, organization_id)
+            if not identity.is_active:
+                raise ValueError("Identity mapping requires an active workspace member.")
+            # The identity service persists channel_account_links. This return
+            # value is its compatibility mirror, not a second authority.
+            return IdentityMapping(organization_id=organization_id, channel_type=channel_type,
+                                   external_user_id=str(external_user_id), external_username=external_username,
+                                   internal_user_id=internal_user_id, internal_member_id=identity.member_id,
+                                   metadata=metadata or {})
         member_id = self._org_user_to_member.get(f"{organization_id}:{internal_user_id}")
         if not member_id:
             # Distinguish user belonging to another organization from completely unknown user
@@ -191,11 +204,31 @@ class MembershipStore:
         channel_type: ChannelType,
         external_user_id: str
     ) -> Optional[IdentityMapping]:
+        from app.tenancy.repository import tenant_repository
+        if tenant_repository.configured:
+            with tenant_repository.transaction() as cur:
+                row = tenant_repository.one(cur, "SELECT l.person_id,l.username,m.id AS member_id FROM channel_account_links l JOIN memberships m ON m.user_id=l.person_id AND m.organization_id=l.organization_id WHERE l.organization_id=%s AND l.channel_type=%s AND l.account_id=%s AND l.is_verified=TRUE AND l.is_active=TRUE AND l.revoked_at IS NULL AND l.confidence>=0.8",
+                                            (organization_id, channel_type.value, str(external_user_id)))
+            if not row:
+                return None
+            return IdentityMapping(organization_id=organization_id, channel_type=channel_type,
+                                   external_user_id=str(external_user_id), external_username=row["username"],
+                                   internal_user_id=row["person_id"], internal_member_id=row["member_id"])
         key = f"{organization_id}:{channel_type.value}:{external_user_id}"
         return self._identity_mappings.get(key)
 
     def get_person(self, user_id: str) -> Optional[Person]:
+        from app.tenancy.repository import tenant_repository
+        if tenant_repository.configured:
+            row = tenant_repository.find_user(user_id=user_id)
+            return Person(id=row["id"], name=row["name"], email=row["email"]) if row else None
         return self._persons.get(user_id)
+
+    def list_people(self):
+        from app.tenancy.repository import tenant_repository
+        if tenant_repository.configured:
+            return [Person(**row) for row in tenant_repository.list_people()]
+        return list(self._persons.values())
 
     def register_member(
         self,
@@ -232,6 +265,21 @@ class MembershipStore:
         return member
 
     def get_identity_context(self, user_id: str, organization_id: str) -> IdentityContext:
+        from app.tenancy.repository import tenant_repository
+        if tenant_repository.configured:
+            # No cache: revocations and role changes apply on the next lookup.
+            tenant_repository.workspace(organization_id)
+            with tenant_repository.transaction() as cur:
+                row = tenant_repository.one(cur, "SELECT * FROM memberships WHERE organization_id=%s AND user_id=%s", (organization_id, user_id))
+            roles = []
+            scopes = [PermissionLevel.PUBLIC_COMMUNITY]
+            if row:
+                permission = PermissionLevel.INTERNAL_CORE if row["role"] in ("owner", "admin") else PermissionLevel.PUBLIC_COMMUNITY
+                if permission == PermissionLevel.INTERNAL_CORE:
+                    scopes.append(permission)
+                roles = [RoleAssignment(organization_id=organization_id, member_id=row["id"], role_id=row["role"], role_name=row["role"], permission=permission)]
+            return IdentityContext(user_id=user_id, organization_id=organization_id, member_id=row["id"] if row else None,
+                                   is_active=bool(row), assigned_roles=roles, permission_scopes=scopes)
         member_id = self._org_user_to_member.get(f"{organization_id}:{user_id}")
         if not member_id:
             # Unknown user: public scope only, inactive membership

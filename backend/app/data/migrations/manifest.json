@@ -99,7 +99,21 @@
       "sha256": "eebdfbbea9ecddcb06cc9c667bcea56d36afd490795910ba9d406e82df46543c",
       "status": "frozen",
       "description": "Server-side FTS Search RPC and Homogeneous Embedding Model Filter in Hybrid Search RPC"
+    },
+    "020_v2_identity_and_tenants": {
+      "sha256": "9b44bb33461f2e1bb80330af8953c098a7a18431bad5385381c3fb8f82391083",
+      "status": "reviewable",
+      "description": "V2 persistent identity, revocable sessions, organizations, memberships, invitations and assistant configuration"
+    },
+    "021_v2_model_credentials": {
+      "sha256": "e7db06891725ddde7769d2f878482cb19a08a79a9ee3fd9b097e5ffc187e0b61",
+      "status": "reviewable",
+      "description": "Organization-scoped AES-256-GCM model credentials, revisions and revocation metadata"
+    },
+    "022_v2_execution_traces": {
+      "sha256": "e64aca4faeb51eb9ab0fea6558625cfc46e9f8f1fdd4e6c88e5ea41f44ed924d",
+      "status": "reviewable",
+      "description": "Managed conversation ownership and redacted execution trace storage"
     }
   }
 }
-

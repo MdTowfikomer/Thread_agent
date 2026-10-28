@@ -1,5 +1,6 @@
 import re
 import logging
+from fastapi import HTTPException
 from difflib import SequenceMatcher
 from typing import Dict, Any, List, Optional, Set
 from datetime import datetime, timezone
@@ -84,7 +85,7 @@ def validate_output(
             return "I am ThreadAgent. I can answer technical questions, check community events, search verified records, and guide you on developer topics."
         if any(p in q_lower for p in ("what tools do you have", "what tools have you got")):
             return "I have community tools like !events (upcoming workshops), !faq (resources), !github (repo info), and !summary (channel recaps), along with grounded search."
-        return "I am online and ready to assist you. Ask me any question about GDG MCET records or general software topics!"
+        return "I am online and ready to assist you. Ask about your organization's authorized records or a general technical topic."
 
     return cleaned
 
@@ -127,7 +128,7 @@ class InboundAgentQueryService:
         Records turns exclusively in conversation_turns, NEVER in source_records / memory_chunks.
         """
         dest = destination_id or "web_chat"
-        session_key = conversation_store.format_session_key(platform.value, dest, principal.user_id)
+        session_key = conversation_store.permission_session_key(platform.value, dest, principal.user_id, principal.access_context.allowed_scopes)
         recent_turns = conversation_store.get_recent_turns(session_key=session_key, organization_id=organization_id, limit=10)
 
         user_turn_texts = [t.get("content", "") for t in recent_turns if t.get("role") == "user"]
@@ -137,6 +138,7 @@ class InboundAgentQueryService:
         initial_state = GraphState(
             query=query,
             organization_id=organization_id,
+            platform=platform.value,
             access_context=principal.access_context,
             session_key=session_key,
             chat_history=recent_turns,
@@ -167,7 +169,7 @@ class InboundAgentQueryService:
             citations = evidence_pack.citations if evidence_pack else []
             confidence = evidence_pack.confidence_score if evidence_pack else 0.0
             sufficient = evidence_pack.sufficient_evidence if evidence_pack else False
-            receipt_dict = evidence_pack.receipt.model_dump() if evidence_pack and evidence_pack.receipt else None
+            receipt_dict = (evidence_pack.receipt.model_dump(mode="json") if hasattr(evidence_pack.receipt, "model_dump") else evidence_pack.receipt) if evidence_pack and evidence_pack.receipt else None
 
             return {
                 "query": query,
@@ -183,12 +185,17 @@ class InboundAgentQueryService:
                 "citations": citations,
                 "confidence_score": confidence,
                 "trace": result.get("trace", []),
+                "trace_id": result.get("trace_id"),
+                "conversation_id": result.get("conversation_id"),
+                "turn_id": result.get("turn_id"),
                 "organization_id": organization_id,
                 "receipt": receipt_dict,
                 "sufficient_evidence": sufficient
             }
-        except Exception as e:
-            logger.error(f"[InboundAgentQueryService] Graph execution failed: {e}")
+        except HTTPException:
+            raise
+        except Exception:
+            logger.error("[InboundAgentQueryService] Graph execution failed; provider details withheld.")
             fallback_msg = "I can't reach the language model right now. Please try again shortly."
             conversation_store.record_turn(session_key, platform.value, organization_id, principal.user_id, "user", query)
             conversation_store.record_turn(session_key, platform.value, organization_id, principal.user_id, "assistant", fallback_msg)
@@ -204,6 +211,201 @@ class InboundAgentQueryService:
                 "receipt": None,
                 "sufficient_evidence": False
             }
+
+    def process_query_stream(
+        self,
+        query: str,
+        organization_id: str,
+        principal: AuthenticatedPrincipal,
+        platform: ChannelType = ChannelType.WEB_CHAT,
+        destination_id: Optional[str] = None,
+        exclude_message_ids: Optional[List[str]] = None
+    ):
+        """
+        Execute agent query workflow with live Server-Sent Events (SSE) streaming.
+        Yields real-time tool calls, stages, and token chunks.
+        """
+        from time import perf_counter
+        from app.graph.workflow import triage_node, retrieval_node, role_agent_node, prepare_synthesis, stream_for_state
+        from app.tracing.repository import trace_repository
+        from app.tenancy.repository import tenant_repository
+        from app.tracing.sanitize import trace_sanitizer, redact_text
+
+        dest = destination_id or "web_chat"
+        session_key = conversation_store.permission_session_key(platform.value, dest, principal.user_id, principal.access_context.allowed_scopes)
+        recent_turns = conversation_store.get_recent_turns(session_key=session_key, organization_id=organization_id, limit=10)
+        user_turn_texts = [t.get("content", "") for t in recent_turns if t.get("role") == "user"]
+        all_exclude = list(exclude_message_ids or [])
+
+        initial_state = GraphState(
+            query=query,
+            organization_id=organization_id,
+            platform=platform.value,
+            access_context=principal.access_context,
+            session_key=session_key,
+            chat_history=recent_turns,
+            exclude_message_ids=all_exclude if all_exclude else None
+        )
+
+        ids = {}
+        started = perf_counter()
+        if tenant_repository.configured:
+            if not principal.access_context or principal.access_context.organization_id != organization_id:
+                raise HTTPException(403, "Verified organization access is required for trace execution.")
+            ids = trace_repository.begin(organization_id, principal.user_id, session_key, platform.value)
+
+        # 1. TRIAGE ROUTER STAGE
+        yield {
+            "type": "stage",
+            "step": "triage_router",
+            "label": "Intent routing",
+            "status": "running",
+            "message": "Analyzing query and routing to specialist agent..."
+        }
+        triage_res = triage_node(initial_state)
+        state = initial_state.model_copy(update=triage_res)
+        intent_cat = state.intent_category
+        best_role_name = state.target_role_name or "General Assistant"
+
+        yield {
+            "type": "stage",
+            "step": "triage_router",
+            "label": "Intent routing",
+            "status": "completed",
+            "message": f"Routed to {best_role_name} under {intent_cat}",
+            "intent": intent_cat,
+            "role": best_role_name
+        }
+
+        # 2. RETRIEVAL OR TOOL EXECUTION STAGE
+        if intent_cat == "TOOL_EXECUTION":
+            tool_name = state.tool_name or "tool"
+            tool_args = state.tool_args or ""
+            yield {
+                "type": "tool_call",
+                "step": "tool_execution",
+                "tool": tool_name,
+                "label": f"Tool: {tool_name}",
+                "status": "running",
+                "message": f"Invoking tool '{tool_name}'" + (f" with args: {tool_args}" if tool_args else "..."),
+                "args": tool_args
+            }
+        elif intent_cat == "ORGANIZATIONAL_FACTS":
+            yield {
+                "type": "stage",
+                "step": "retrieval_service",
+                "label": "Evidence retrieval",
+                "status": "running",
+                "message": "Searching authorized memory records with hybrid RRF..."
+            }
+
+        retrieval_res = retrieval_node(state)
+        state = state.model_copy(update=retrieval_res)
+        eval_res = role_agent_node(state)
+        state = state.model_copy(update=eval_res)
+
+        if intent_cat == "TOOL_EXECUTION":
+            yield {
+                "type": "tool_call",
+                "step": "tool_execution",
+                "tool": state.tool_name,
+                "label": f"Tool: {state.tool_name}",
+                "status": "completed",
+                "message": f"Tool '{state.tool_name}' executed successfully."
+            }
+        elif intent_cat == "ORGANIZATIONAL_FACTS":
+            pack = state.evidence_pack
+            citations_count = len(pack.citations) if pack else 0
+            sufficient = pack.sufficient_evidence if pack else False
+            yield {
+                "type": "stage",
+                "step": "retrieval_service",
+                "label": "Evidence retrieval",
+                "status": "completed",
+                "message": f"Retrieved {citations_count} authorized evidence citation(s) (sufficient: {sufficient}).",
+                "count": citations_count,
+                "sufficient": sufficient
+            }
+        else:
+            yield {
+                "type": "stage",
+                "step": "retrieval_service",
+                "label": "Direct synthesis",
+                "status": "completed",
+                "message": "Conversational / educational inquiry. Bypassed internal memory retrieval."
+            }
+
+        # 3. SYNTHESIS STAGE
+        yield {
+            "type": "stage",
+            "step": "synthesis",
+            "label": "Answer synthesis",
+            "status": "running",
+            "message": "Generating final response..."
+        }
+
+        prompt, immediate_answer, tool_evidence = prepare_synthesis(state)
+        accumulated_chunks = []
+
+        if immediate_answer is not None:
+            clean_answer = redact_text(coerce_model_text(immediate_answer))
+            validated_answer = validate_output(clean_answer, query, user_turn_texts, intent_cat)
+            accumulated_chunks.append(validated_answer)
+            yield {"type": "token", "text": validated_answer}
+        else:
+            for token_chunk in stream_for_state(state, prompt):
+                accumulated_chunks.append(token_chunk)
+                yield {"type": "token", "text": token_chunk}
+            raw_text = "".join(accumulated_chunks)
+            clean_text = redact_text(coerce_model_text(raw_text))
+            validated_answer = validate_output(clean_text, query, user_turn_texts, intent_cat)
+
+        # 4. FINALIZE TURNS AND TRACE
+        conversation_store.record_turn(session_key, platform.value, organization_id, principal.user_id, "user", query)
+        conversation_store.record_turn(session_key, platform.value, organization_id, principal.user_id, "assistant", validated_answer)
+
+        evidence_pack = state.evidence_pack or tool_evidence
+        citations = evidence_pack.citations if evidence_pack else []
+        confidence = evidence_pack.confidence_score if evidence_pack else (1.0 if intent_cat == "TOOL_EXECUTION" else 0.0)
+        sufficient = evidence_pack.sufficient_evidence if evidence_pack else (intent_cat != "ORGANIZATIONAL_FACTS")
+        receipt_dict = (evidence_pack.receipt.model_dump(mode="json") if hasattr(evidence_pack.receipt, "model_dump") else evidence_pack.receipt) if evidence_pack and evidence_pack.receipt else None
+
+        ws = get_workspace(organization_id)
+        role_id = state.target_role_id or ws.default_role_id
+        role_info = get_role_agent(organization_id, role_id)
+
+        outcome = "refused" if intent_cat == "ORGANIZATIONAL_FACTS" and not sufficient else "completed"
+        if ids:
+            total_latency = (perf_counter() - started) * 1000
+            try:
+                trace_repository.finish(ids["trace_id"], organization_id, outcome, state.trace, total_latency)
+            except Exception:
+                pass
+
+        yield {
+            "type": "complete",
+            "response": {
+                "query": query,
+                "answer": validated_answer,
+                "intent_category": intent_cat,
+                "role_agent": {
+                    "id": role_info.id if role_info else role_id,
+                    "name": role_info.name if role_info else "Thread Agent",
+                    "role": role_info.role if role_info else "Lead",
+                    "avatar": role_info.avatar if role_info else "",
+                    "department": role_info.department if role_info else "Core"
+                },
+                "citations": [c.model_dump(mode="json") if hasattr(c, "model_dump") else c for c in citations],
+                "confidence_score": confidence,
+                "trace": trace_sanitizer.stages(state.trace),
+                "trace_id": ids.get("trace_id"),
+                "conversation_id": ids.get("conversation_id"),
+                "turn_id": ids.get("turn_id"),
+                "organization_id": organization_id,
+                "receipt": receipt_dict,
+                "sufficient_evidence": sufficient
+            }
+        }
 
     def process_and_deliver(
         self,
@@ -227,17 +429,24 @@ class InboundAgentQueryService:
             all_exclude.append(triggering_message_id)
 
         # 1. Call process_query() once
-        query_res = self.process_query(
-            query=query,
-            organization_id=principal.organization_id,
-            principal=principal,
-            platform=platform,
-            destination_id=destination_id,
-            exclude_message_ids=all_exclude if all_exclude else None
-        )
+        from app.tenancy.models import TenantModelNotConfiguredError, TenantModelUnavailableError
+        try:
+            query_res = self.process_query(
+                query=query,
+                organization_id=principal.organization_id,
+                principal=principal,
+                platform=platform,
+                destination_id=destination_id,
+                exclude_message_ids=all_exclude if all_exclude else None
+            )
+        except (TenantModelNotConfiguredError, TenantModelUnavailableError) as exc:
+            # Platform replies still pass through the destination's authorization
+            # and idempotent delivery checks. No source evidence accompanies errors.
+            query_res = {"answer": exc.detail, "intent_category": "MODEL_ERROR",
+                         "citations": [], "receipt": None, "role_agent": None}
 
         # 2. Use its answer after validate_output()
-        session_key = conversation_store.format_session_key(platform.value, destination_id, principal.user_id)
+        session_key = conversation_store.permission_session_key(platform.value, destination_id, principal.user_id, principal.access_context.allowed_scopes)
         recent_turns = conversation_store.get_recent_turns(session_key=session_key, organization_id=principal.organization_id, limit=10)
         user_turn_texts = [t.get("content", "") for t in recent_turns if t.get("role") == "user"]
 

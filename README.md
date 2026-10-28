@@ -1,5 +1,12 @@
 # 🧵 Thread Agent: AI Organizational Context & Multi-Platform Intelligence
 
+V2 demo work adds organization accounts, BYOK, evaluations and conversation-scoped
+traces. Start with the [codebase walkthrough](CODEBASE_WALKTHROUGH.md),
+[implementation and verification notes](specs/EVALS_AND_TRACES_IMPLEMENTATION.md),
+and [synthetic evaluation report](specs/reports/eval_v2_report.md). Customer-owned
+databases and self-service Discord onboarding are future scope. Live verification
+limits are documented; offline fixture scores are not production accuracy claims.
+
 > **"Thread is not a chatbot with a vector database. Thread is a context reconstruction system."**  
 > *Search retrieves. Memory stores. Thread reconstructs.*  
 >  

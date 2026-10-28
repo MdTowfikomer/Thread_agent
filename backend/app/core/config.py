@@ -40,7 +40,6 @@ class Settings:
     SUPABASE_PUBLISHABLE_KEY: str = os.getenv("SUPABASE_PUBLISHABLE_KEY", os.getenv("SUPABASE_ANON_KEY", ""))
     
     # Defaults
-    DEFAULT_DOMAIN: str = "gdg_mcet"
     EMBEDDING_DIMENSION: int = 768
     DEFAULT_EMBEDDING_MODEL: str = os.getenv("THREAD_EMBEDDING_MODEL", "models/gemini-embedding-001")
     

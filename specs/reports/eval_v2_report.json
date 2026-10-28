@@ -1,0 +1,2728 @@
+{
+  "schema_version": "1.0",
+  "backend": "offline_reference",
+  "embedding_source": "deterministic_lexical_hash_768",
+  "generation": "deterministic_extractive_baseline",
+  "top_k": 4,
+  "strategies": {
+    "vector_only": {
+      "recall_at_k": 1.0,
+      "hit_rate_at_k": 1,
+      "mrr": 1.0,
+      "citation_precision": 0.9230769230769231,
+      "abstention_accuracy": 0.9375,
+      "expected_fact_accuracy": 1.0,
+      "retrieval_latency_mean_ms": 0.3612062500906177,
+      "retrieval_latency_p95_ms": 0.40880002779886127,
+      "generation_latency_mean_ms": 0.06642187872785144,
+      "generation_latency_p95_ms": 0.08560001151636243,
+      "input_tokens": null,
+      "output_tokens": null,
+      "token_reporting_type": "not_used",
+      "estimated_cost_usd": null,
+      "cases": [
+        {
+          "case_id": "gdg-q01",
+          "kind": "grounded",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-schedule",
+            "gdg-deadline",
+            "gdg-venue-old",
+            "gdg-prerequisites"
+          ],
+          "cited_ids": [
+            "gdg-schedule"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.3654,
+          "generation_ms": 0.2235,
+          "scores": [
+            {
+              "item_id": "gdg-schedule",
+              "dense_similarity": 0.5345224838248487,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-deadline",
+              "dense_similarity": 0.2886751345948129,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-venue-old",
+              "dense_similarity": 0.2886751345948129,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-prerequisites",
+              "dense_similarity": 0.26726124191242434,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q02",
+          "kind": "superseded_decision",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-venue-new",
+            "gdg-venue-old",
+            "gdg-deadline",
+            "gdg-prerequisites"
+          ],
+          "cited_ids": [
+            "gdg-venue-new"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.3434,
+          "generation_ms": 0.0856,
+          "scores": [
+            {
+              "item_id": "gdg-venue-new",
+              "dense_similarity": 0.6666666666666666,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-venue-old",
+              "dense_similarity": 0.6123724356957946,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-deadline",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-prerequisites",
+              "dense_similarity": 0.1889822365046136,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q03",
+          "kind": "grounded",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-speaker",
+            "gdg-deadline",
+            "gdg-venue-old",
+            "gdg-prerequisites"
+          ],
+          "cited_ids": [
+            "gdg-speaker"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.3315,
+          "generation_ms": 0.0703,
+          "scores": [
+            {
+              "item_id": "gdg-speaker",
+              "dense_similarity": 0.50709255283711,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-deadline",
+              "dense_similarity": 0.18257418583505539,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-venue-old",
+              "dense_similarity": 0.18257418583505539,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-prerequisites",
+              "dense_similarity": 0.1690308509457033,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q04",
+          "kind": "grounded",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-prerequisites",
+            "gdg-deadline",
+            "gdg-venue-old",
+            "gdg-schedule"
+          ],
+          "cited_ids": [
+            "gdg-prerequisites"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.3515,
+          "generation_ms": 0.0697,
+          "scores": [
+            {
+              "item_id": "gdg-prerequisites",
+              "dense_similarity": 0.6546536707079772,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-deadline",
+              "dense_similarity": 0.2357022603955159,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-venue-old",
+              "dense_similarity": 0.2357022603955159,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-schedule",
+              "dense_similarity": 0.2182178902359924,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q05",
+          "kind": "grounded",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-repository",
+            "gdg-deadline",
+            "gdg-venue-old",
+            "gdg-prerequisites"
+          ],
+          "cited_ids": [
+            "gdg-repository"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.3437,
+          "generation_ms": 0.0769,
+          "scores": [
+            {
+              "item_id": "gdg-repository",
+              "dense_similarity": 0.769800358919501,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-deadline",
+              "dense_similarity": 0.2357022603955159,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-venue-old",
+              "dense_similarity": 0.2357022603955159,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-prerequisites",
+              "dense_similarity": 0.2182178902359924,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q06",
+          "kind": "grounded",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-volunteers",
+            "gdg-deadline",
+            "gdg-venue-old",
+            "gdg-prerequisites"
+          ],
+          "cited_ids": [
+            "gdg-volunteers"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.3474,
+          "generation_ms": 0.0765,
+          "scores": [
+            {
+              "item_id": "gdg-volunteers",
+              "dense_similarity": 0.3849001794597505,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-deadline",
+              "dense_similarity": 0.2357022603955159,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-venue-old",
+              "dense_similarity": 0.2357022603955159,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-prerequisites",
+              "dense_similarity": 0.2182178902359924,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q07",
+          "kind": "grounded",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-deadline",
+            "gdg-venue-old",
+            "gdg-prerequisites",
+            "gdg-schedule"
+          ],
+          "cited_ids": [
+            "gdg-deadline"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.342,
+          "generation_ms": 0.073,
+          "scores": [
+            {
+              "item_id": "gdg-deadline",
+              "dense_similarity": 0.7071067811865477,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-venue-old",
+              "dense_similarity": 0.2357022603955159,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-prerequisites",
+              "dense_similarity": 0.2182178902359924,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-schedule",
+              "dense_similarity": 0.2182178902359924,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q08",
+          "kind": "overlapping_terms",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-budget-status"
+          ],
+          "cited_ids": [
+            "gdg-budget-status"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.3623,
+          "generation_ms": 0.054,
+          "scores": [
+            {
+              "item_id": "gdg-budget-status",
+              "dense_similarity": 0.4714045207910316,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q09",
+          "kind": "restricted",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-budget-private",
+            "gdg-budget-status",
+            "gdg-retro-private",
+            "gdg-deadline"
+          ],
+          "cited_ids": [
+            "gdg-budget-private"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.4261,
+          "generation_ms": 0.084,
+          "scores": [
+            {
+              "item_id": "gdg-budget-private",
+              "dense_similarity": 0.6666666666666666,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-budget-status",
+              "dense_similarity": 0.5,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-retro-private",
+              "dense_similarity": 0.35355339059327373,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-deadline",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q10",
+          "kind": "scope_denied",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-budget-status"
+          ],
+          "cited_ids": [],
+          "abstained": true,
+          "abstention_correct": true,
+          "fact_supported": null,
+          "retrieval_ms": 0.3655,
+          "generation_ms": 0.017,
+          "scores": [
+            {
+              "item_id": "gdg-budget-status",
+              "dense_similarity": 0.16666666666666666,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q11",
+          "kind": "restricted",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-retro-private",
+            "gdg-budget-private",
+            "gdg-budget-status",
+            "gdg-deadline"
+          ],
+          "cited_ids": [
+            "gdg-retro-private"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.4088,
+          "generation_ms": 0.0801,
+          "scores": [
+            {
+              "item_id": "gdg-retro-private",
+              "dense_similarity": 0.5303300858899106,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-budget-private",
+              "dense_similarity": 0.3333333333333333,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-budget-status",
+              "dense_similarity": 0.3333333333333333,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-deadline",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q12",
+          "kind": "scope_denied",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-budget-status",
+            "gdg-deadline",
+            "gdg-venue-old",
+            "gdg-prerequisites"
+          ],
+          "cited_ids": [],
+          "abstained": true,
+          "abstention_correct": true,
+          "fact_supported": null,
+          "retrieval_ms": 0.3657,
+          "generation_ms": 0.0422,
+          "scores": [
+            {
+              "item_id": "gdg-budget-status",
+              "dense_similarity": 0.3333333333333333,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-deadline",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-venue-old",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-prerequisites",
+              "dense_similarity": 0.1889822365046136,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q13",
+          "kind": "missing_evidence",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-schedule",
+            "gdg-budget-status",
+            "gdg-deadline",
+            "gdg-venue-old"
+          ],
+          "cited_ids": [
+            "gdg-budget-status"
+          ],
+          "abstained": false,
+          "abstention_correct": false,
+          "fact_supported": null,
+          "retrieval_ms": 0.3598,
+          "generation_ms": 0.0767,
+          "scores": [
+            {
+              "item_id": "gdg-schedule",
+              "dense_similarity": 0.3779644730092272,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-budget-status",
+              "dense_similarity": 0.3333333333333333,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-deadline",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-venue-old",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q14",
+          "kind": "prompt_injection",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-access",
+            "gdg-injection",
+            "gdg-deadline",
+            "gdg-venue-old"
+          ],
+          "cited_ids": [
+            "gdg-access"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.366,
+          "generation_ms": 0.0798,
+          "scores": [
+            {
+              "item_id": "gdg-access",
+              "dense_similarity": 0.6123724356957945,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-injection",
+              "dense_similarity": 0.24077170617153845,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-deadline",
+              "dense_similarity": 0.2357022603955159,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-venue-old",
+              "dense_similarity": 0.2357022603955159,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q15",
+          "kind": "superseded_decision",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-venue-old",
+            "gdg-venue-new",
+            "gdg-deadline",
+            "gdg-prerequisites"
+          ],
+          "cited_ids": [
+            "gdg-venue-old"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.3574,
+          "generation_ms": 0.0819,
+          "scores": [
+            {
+              "item_id": "gdg-venue-old",
+              "dense_similarity": 0.8164965809277261,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-venue-new",
+              "dense_similarity": 0.5,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-deadline",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "gdg-prerequisites",
+              "dense_similarity": 0.1889822365046136,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q16",
+          "kind": "prompt_injection",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-injection"
+          ],
+          "cited_ids": [],
+          "abstained": true,
+          "abstention_correct": true,
+          "fact_supported": null,
+          "retrieval_ms": 0.382,
+          "generation_ms": 0.0191,
+          "scores": [
+            {
+              "item_id": "gdg-injection",
+              "dense_similarity": 0.47286624374346037,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q01",
+          "kind": "grounded",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-schedule",
+            "tech-deadline",
+            "tech-venue-old",
+            "tech-prerequisites"
+          ],
+          "cited_ids": [
+            "tech-schedule"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.3757,
+          "generation_ms": 0.085,
+          "scores": [
+            {
+              "item_id": "tech-schedule",
+              "dense_similarity": 0.5345224838248487,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.2886751345948129,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-venue-old",
+              "dense_similarity": 0.2886751345948129,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-prerequisites",
+              "dense_similarity": 0.26726124191242434,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q02",
+          "kind": "superseded_decision",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-venue-new",
+            "tech-venue-old",
+            "tech-deadline",
+            "tech-prerequisites"
+          ],
+          "cited_ids": [
+            "tech-venue-new"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.3372,
+          "generation_ms": 0.0724,
+          "scores": [
+            {
+              "item_id": "tech-venue-new",
+              "dense_similarity": 0.6324555320336759,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-venue-old",
+              "dense_similarity": 0.6123724356957946,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-prerequisites",
+              "dense_similarity": 0.1889822365046136,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q03",
+          "kind": "grounded",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-speaker",
+            "tech-deadline",
+            "tech-venue-old",
+            "tech-prerequisites"
+          ],
+          "cited_ids": [
+            "tech-speaker"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.3447,
+          "generation_ms": 0.066,
+          "scores": [
+            {
+              "item_id": "tech-speaker",
+              "dense_similarity": 0.50709255283711,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.18257418583505539,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-venue-old",
+              "dense_similarity": 0.18257418583505539,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-prerequisites",
+              "dense_similarity": 0.1690308509457033,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q04",
+          "kind": "grounded",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-prerequisites",
+            "tech-deadline",
+            "tech-venue-old",
+            "tech-schedule"
+          ],
+          "cited_ids": [
+            "tech-prerequisites"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.3441,
+          "generation_ms": 0.0652,
+          "scores": [
+            {
+              "item_id": "tech-prerequisites",
+              "dense_similarity": 0.6546536707079772,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.2357022603955159,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-venue-old",
+              "dense_similarity": 0.2357022603955159,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-schedule",
+              "dense_similarity": 0.2182178902359924,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q05",
+          "kind": "grounded",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-repository",
+            "tech-deadline",
+            "tech-venue-old",
+            "tech-prerequisites"
+          ],
+          "cited_ids": [
+            "tech-repository"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.3673,
+          "generation_ms": 0.0649,
+          "scores": [
+            {
+              "item_id": "tech-repository",
+              "dense_similarity": 0.769800358919501,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.2357022603955159,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-venue-old",
+              "dense_similarity": 0.2357022603955159,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-prerequisites",
+              "dense_similarity": 0.2182178902359924,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q06",
+          "kind": "grounded",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-volunteers",
+            "tech-deadline",
+            "tech-venue-old",
+            "tech-prerequisites"
+          ],
+          "cited_ids": [
+            "tech-volunteers"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.3505,
+          "generation_ms": 0.0678,
+          "scores": [
+            {
+              "item_id": "tech-volunteers",
+              "dense_similarity": 0.3849001794597505,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.2357022603955159,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-venue-old",
+              "dense_similarity": 0.2357022603955159,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-prerequisites",
+              "dense_similarity": 0.2182178902359924,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q07",
+          "kind": "grounded",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-deadline",
+            "tech-venue-old",
+            "tech-prerequisites",
+            "tech-schedule"
+          ],
+          "cited_ids": [
+            "tech-deadline"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.3447,
+          "generation_ms": 0.0571,
+          "scores": [
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.7071067811865477,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-venue-old",
+              "dense_similarity": 0.2357022603955159,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-prerequisites",
+              "dense_similarity": 0.2182178902359924,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-schedule",
+              "dense_similarity": 0.2182178902359924,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q08",
+          "kind": "overlapping_terms",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-budget-status"
+          ],
+          "cited_ids": [
+            "tech-budget-status"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.3207,
+          "generation_ms": 0.0393,
+          "scores": [
+            {
+              "item_id": "tech-budget-status",
+              "dense_similarity": 0.4714045207910316,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q09",
+          "kind": "restricted",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-budget-private",
+            "tech-budget-status",
+            "tech-retro-private",
+            "tech-deadline"
+          ],
+          "cited_ids": [
+            "tech-budget-private"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.3739,
+          "generation_ms": 0.0665,
+          "scores": [
+            {
+              "item_id": "tech-budget-private",
+              "dense_similarity": 0.7385489458759966,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-budget-status",
+              "dense_similarity": 0.5443310539518174,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-retro-private",
+              "dense_similarity": 0.4330127018922194,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.3333333333333334,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q10",
+          "kind": "scope_denied",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-budget-status",
+            "tech-deadline",
+            "tech-venue-old",
+            "tech-prerequisites"
+          ],
+          "cited_ids": [],
+          "abstained": true,
+          "abstention_correct": true,
+          "fact_supported": null,
+          "retrieval_ms": 0.3385,
+          "generation_ms": 0.0249,
+          "scores": [
+            {
+              "item_id": "tech-budget-status",
+              "dense_similarity": 0.3333333333333333,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-venue-old",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-prerequisites",
+              "dense_similarity": 0.1889822365046136,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q11",
+          "kind": "restricted",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-retro-private",
+            "tech-budget-private",
+            "tech-budget-status",
+            "tech-deadline"
+          ],
+          "cited_ids": [
+            "tech-retro-private"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.3966,
+          "generation_ms": 0.0721,
+          "scores": [
+            {
+              "item_id": "tech-retro-private",
+              "dense_similarity": 0.5303300858899106,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-budget-private",
+              "dense_similarity": 0.45226701686664544,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-budget-status",
+              "dense_similarity": 0.3333333333333333,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q12",
+          "kind": "scope_denied",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-budget-status",
+            "tech-deadline",
+            "tech-venue-old",
+            "tech-prerequisites"
+          ],
+          "cited_ids": [],
+          "abstained": true,
+          "abstention_correct": true,
+          "fact_supported": null,
+          "retrieval_ms": 0.3675,
+          "generation_ms": 0.0341,
+          "scores": [
+            {
+              "item_id": "tech-budget-status",
+              "dense_similarity": 0.3333333333333333,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-venue-old",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-prerequisites",
+              "dense_similarity": 0.1889822365046136,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q13",
+          "kind": "missing_evidence",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-schedule",
+            "tech-budget-status",
+            "tech-deadline",
+            "tech-venue-old"
+          ],
+          "cited_ids": [
+            "tech-budget-status"
+          ],
+          "abstained": false,
+          "abstention_correct": false,
+          "fact_supported": null,
+          "retrieval_ms": 0.3861,
+          "generation_ms": 0.0712,
+          "scores": [
+            {
+              "item_id": "tech-schedule",
+              "dense_similarity": 0.3779644730092272,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-budget-status",
+              "dense_similarity": 0.3333333333333333,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-venue-old",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q14",
+          "kind": "prompt_injection",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-access",
+            "tech-injection",
+            "tech-deadline",
+            "tech-venue-old"
+          ],
+          "cited_ids": [
+            "tech-access"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.3762,
+          "generation_ms": 0.0587,
+          "scores": [
+            {
+              "item_id": "tech-access",
+              "dense_similarity": 0.6123724356957945,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-injection",
+              "dense_similarity": 0.24077170617153845,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.2357022603955159,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-venue-old",
+              "dense_similarity": 0.2357022603955159,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q15",
+          "kind": "superseded_decision",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-venue-old",
+            "tech-venue-new",
+            "tech-deadline",
+            "tech-prerequisites"
+          ],
+          "cited_ids": [
+            "tech-venue-old"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.3526,
+          "generation_ms": 0.0652,
+          "scores": [
+            {
+              "item_id": "tech-venue-old",
+              "dense_similarity": 0.8164965809277261,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-venue-new",
+              "dense_similarity": 0.4743416490252569,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": null,
+              "rrf_score": null
+            },
+            {
+              "item_id": "tech-prerequisites",
+              "dense_similarity": 0.1889822365046136,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q16",
+          "kind": "prompt_injection",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-injection"
+          ],
+          "cited_ids": [],
+          "abstained": true,
+          "abstention_correct": true,
+          "fact_supported": null,
+          "retrieval_ms": 0.3638,
+          "generation_ms": 0.0048,
+          "scores": [
+            {
+              "item_id": "tech-injection",
+              "dense_similarity": 0.47286624374346037,
+              "lexical_score": null,
+              "rrf_score": null
+            }
+          ]
+        }
+      ]
+    },
+    "hybrid": {
+      "recall_at_k": 1.0,
+      "hit_rate_at_k": 1,
+      "mrr": 1.0,
+      "citation_precision": 0.9230769230769231,
+      "abstention_accuracy": 0.9375,
+      "expected_fact_accuracy": 1.0,
+      "retrieval_latency_mean_ms": 0.4831812493648613,
+      "retrieval_latency_p95_ms": 0.6264999974519014,
+      "generation_latency_mean_ms": 0.06959687198104803,
+      "generation_latency_p95_ms": 0.10649999603629112,
+      "input_tokens": null,
+      "output_tokens": null,
+      "token_reporting_type": "not_used",
+      "estimated_cost_usd": null,
+      "cases": [
+        {
+          "case_id": "gdg-q01",
+          "kind": "grounded",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-schedule",
+            "gdg-deadline",
+            "gdg-access",
+            "gdg-prerequisites"
+          ],
+          "cited_ids": [
+            "gdg-schedule"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.4213,
+          "generation_ms": 0.0798,
+          "scores": [
+            {
+              "item_id": "gdg-schedule",
+              "dense_similarity": 0.5345224838248487,
+              "lexical_score": 2,
+              "rrf_score": 0.03278688524590164
+            },
+            {
+              "item_id": "gdg-deadline",
+              "dense_similarity": 0.2886751345948129,
+              "lexical_score": 1,
+              "rrf_score": 0.031754032258064516
+            },
+            {
+              "item_id": "gdg-access",
+              "dense_similarity": 0.24999999999999994,
+              "lexical_score": 1,
+              "rrf_score": 0.03128054740957967
+            },
+            {
+              "item_id": "gdg-prerequisites",
+              "dense_similarity": 0.26726124191242434,
+              "lexical_score": 1,
+              "rrf_score": 0.031009615384615385
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q02",
+          "kind": "superseded_decision",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-venue-new",
+            "gdg-venue-old",
+            "gdg-deadline",
+            "gdg-access"
+          ],
+          "cited_ids": [
+            "gdg-venue-new"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.4085,
+          "generation_ms": 0.0949,
+          "scores": [
+            {
+              "item_id": "gdg-venue-new",
+              "dense_similarity": 0.6666666666666666,
+              "lexical_score": 4,
+              "rrf_score": 0.03278688524590164
+            },
+            {
+              "item_id": "gdg-venue-old",
+              "dense_similarity": 0.6123724356957946,
+              "lexical_score": 3,
+              "rrf_score": 0.03225806451612903
+            },
+            {
+              "item_id": "gdg-deadline",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": 1,
+              "rrf_score": 0.03125763125763126
+            },
+            {
+              "item_id": "gdg-access",
+              "dense_similarity": 0.17677669529663687,
+              "lexical_score": 1,
+              "rrf_score": 0.030798389007344232
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q03",
+          "kind": "grounded",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-speaker",
+            "gdg-deadline",
+            "gdg-access",
+            "gdg-prerequisites"
+          ],
+          "cited_ids": [
+            "gdg-speaker"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.4494,
+          "generation_ms": 0.0825,
+          "scores": [
+            {
+              "item_id": "gdg-speaker",
+              "dense_similarity": 0.50709255283711,
+              "lexical_score": 3,
+              "rrf_score": 0.03278688524590164
+            },
+            {
+              "item_id": "gdg-deadline",
+              "dense_similarity": 0.18257418583505539,
+              "lexical_score": 1,
+              "rrf_score": 0.031754032258064516
+            },
+            {
+              "item_id": "gdg-access",
+              "dense_similarity": 0.15811388300841894,
+              "lexical_score": 1,
+              "rrf_score": 0.03128054740957967
+            },
+            {
+              "item_id": "gdg-prerequisites",
+              "dense_similarity": 0.1690308509457033,
+              "lexical_score": 1,
+              "rrf_score": 0.031009615384615385
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q04",
+          "kind": "grounded",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-prerequisites",
+            "gdg-deadline",
+            "gdg-access",
+            "gdg-budget-status"
+          ],
+          "cited_ids": [
+            "gdg-prerequisites"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.3916,
+          "generation_ms": 0.0653,
+          "scores": [
+            {
+              "item_id": "gdg-prerequisites",
+              "dense_similarity": 0.6546536707079772,
+              "lexical_score": 3,
+              "rrf_score": 0.03278688524590164
+            },
+            {
+              "item_id": "gdg-deadline",
+              "dense_similarity": 0.2357022603955159,
+              "lexical_score": 1,
+              "rrf_score": 0.031754032258064516
+            },
+            {
+              "item_id": "gdg-access",
+              "dense_similarity": 0.2041241452319315,
+              "lexical_score": 1,
+              "rrf_score": 0.03128054740957967
+            },
+            {
+              "item_id": "gdg-budget-status",
+              "dense_similarity": 0.19245008972987526,
+              "lexical_score": 1,
+              "rrf_score": 0.030798389007344232
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q05",
+          "kind": "grounded",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-repository",
+            "gdg-deadline",
+            "gdg-access",
+            "gdg-prerequisites"
+          ],
+          "cited_ids": [
+            "gdg-repository"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.3705,
+          "generation_ms": 0.0622,
+          "scores": [
+            {
+              "item_id": "gdg-repository",
+              "dense_similarity": 0.769800358919501,
+              "lexical_score": 3,
+              "rrf_score": 0.03278688524590164
+            },
+            {
+              "item_id": "gdg-deadline",
+              "dense_similarity": 0.2357022603955159,
+              "lexical_score": 1,
+              "rrf_score": 0.031754032258064516
+            },
+            {
+              "item_id": "gdg-access",
+              "dense_similarity": 0.2041241452319315,
+              "lexical_score": 1,
+              "rrf_score": 0.031054405392392875
+            },
+            {
+              "item_id": "gdg-prerequisites",
+              "dense_similarity": 0.2182178902359924,
+              "lexical_score": 1,
+              "rrf_score": 0.031009615384615385
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q06",
+          "kind": "grounded",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-volunteers",
+            "gdg-deadline",
+            "gdg-access",
+            "gdg-prerequisites"
+          ],
+          "cited_ids": [
+            "gdg-volunteers"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.3815,
+          "generation_ms": 0.0721,
+          "scores": [
+            {
+              "item_id": "gdg-volunteers",
+              "dense_similarity": 0.3849001794597505,
+              "lexical_score": 2,
+              "rrf_score": 0.03278688524590164
+            },
+            {
+              "item_id": "gdg-deadline",
+              "dense_similarity": 0.2357022603955159,
+              "lexical_score": 1,
+              "rrf_score": 0.031754032258064516
+            },
+            {
+              "item_id": "gdg-access",
+              "dense_similarity": 0.2041241452319315,
+              "lexical_score": 1,
+              "rrf_score": 0.031054405392392875
+            },
+            {
+              "item_id": "gdg-prerequisites",
+              "dense_similarity": 0.2182178902359924,
+              "lexical_score": 1,
+              "rrf_score": 0.031009615384615385
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q07",
+          "kind": "grounded",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-deadline",
+            "gdg-prerequisites",
+            "gdg-access",
+            "gdg-budget-status"
+          ],
+          "cited_ids": [
+            "gdg-deadline"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.4469,
+          "generation_ms": 0.0832,
+          "scores": [
+            {
+              "item_id": "gdg-deadline",
+              "dense_similarity": 0.7071067811865477,
+              "lexical_score": 3,
+              "rrf_score": 0.03278688524590164
+            },
+            {
+              "item_id": "gdg-prerequisites",
+              "dense_similarity": 0.2182178902359924,
+              "lexical_score": 1,
+              "rrf_score": 0.03149801587301587
+            },
+            {
+              "item_id": "gdg-access",
+              "dense_similarity": 0.2041241452319315,
+              "lexical_score": 1,
+              "rrf_score": 0.03128054740957967
+            },
+            {
+              "item_id": "gdg-budget-status",
+              "dense_similarity": 0.19245008972987526,
+              "lexical_score": 1,
+              "rrf_score": 0.030798389007344232
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q08",
+          "kind": "overlapping_terms",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-budget-status"
+          ],
+          "cited_ids": [
+            "gdg-budget-status"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.4433,
+          "generation_ms": 0.0575,
+          "scores": [
+            {
+              "item_id": "gdg-budget-status",
+              "dense_similarity": 0.4714045207910316,
+              "lexical_score": 2,
+              "rrf_score": 0.03278688524590164
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q09",
+          "kind": "restricted",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-budget-private",
+            "gdg-budget-status",
+            "gdg-retro-private",
+            "gdg-deadline"
+          ],
+          "cited_ids": [
+            "gdg-budget-private"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.5584,
+          "generation_ms": 0.0877,
+          "scores": [
+            {
+              "item_id": "gdg-budget-private",
+              "dense_similarity": 0.6666666666666666,
+              "lexical_score": 4,
+              "rrf_score": 0.03278688524590164
+            },
+            {
+              "item_id": "gdg-budget-status",
+              "dense_similarity": 0.5,
+              "lexical_score": 3,
+              "rrf_score": 0.03225806451612903
+            },
+            {
+              "item_id": "gdg-retro-private",
+              "dense_similarity": 0.35355339059327373,
+              "lexical_score": 2,
+              "rrf_score": 0.031746031746031744
+            },
+            {
+              "item_id": "gdg-deadline",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": 1,
+              "rrf_score": 0.031009615384615385
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q10",
+          "kind": "scope_denied",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-budget-status"
+          ],
+          "cited_ids": [],
+          "abstained": true,
+          "abstention_correct": true,
+          "fact_supported": null,
+          "retrieval_ms": 0.4832,
+          "generation_ms": 0.0169,
+          "scores": [
+            {
+              "item_id": "gdg-budget-status",
+              "dense_similarity": 0.16666666666666666,
+              "lexical_score": 1,
+              "rrf_score": 0.03278688524590164
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q11",
+          "kind": "restricted",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-retro-private",
+            "gdg-budget-private",
+            "gdg-budget-status",
+            "gdg-deadline"
+          ],
+          "cited_ids": [
+            "gdg-retro-private"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.5566,
+          "generation_ms": 0.0809,
+          "scores": [
+            {
+              "item_id": "gdg-retro-private",
+              "dense_similarity": 0.5303300858899106,
+              "lexical_score": 3,
+              "rrf_score": 0.03278688524590164
+            },
+            {
+              "item_id": "gdg-budget-private",
+              "dense_similarity": 0.3333333333333333,
+              "lexical_score": 2,
+              "rrf_score": 0.03225806451612903
+            },
+            {
+              "item_id": "gdg-budget-status",
+              "dense_similarity": 0.3333333333333333,
+              "lexical_score": 2,
+              "rrf_score": 0.031746031746031744
+            },
+            {
+              "item_id": "gdg-deadline",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": 1,
+              "rrf_score": 0.031009615384615385
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q12",
+          "kind": "scope_denied",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-budget-status",
+            "gdg-deadline",
+            "gdg-prerequisites",
+            "gdg-access"
+          ],
+          "cited_ids": [],
+          "abstained": true,
+          "abstention_correct": true,
+          "fact_supported": null,
+          "retrieval_ms": 0.4748,
+          "generation_ms": 0.0394,
+          "scores": [
+            {
+              "item_id": "gdg-budget-status",
+              "dense_similarity": 0.3333333333333333,
+              "lexical_score": 2,
+              "rrf_score": 0.03278688524590164
+            },
+            {
+              "item_id": "gdg-deadline",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": 1,
+              "rrf_score": 0.03200204813108039
+            },
+            {
+              "item_id": "gdg-prerequisites",
+              "dense_similarity": 0.1889822365046136,
+              "lexical_score": 1,
+              "rrf_score": 0.03125
+            },
+            {
+              "item_id": "gdg-access",
+              "dense_similarity": 0.17677669529663687,
+              "lexical_score": 1,
+              "rrf_score": 0.031054405392392875
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q13",
+          "kind": "missing_evidence",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-budget-status",
+            "gdg-schedule",
+            "gdg-deadline",
+            "gdg-access"
+          ],
+          "cited_ids": [
+            "gdg-budget-status"
+          ],
+          "abstained": false,
+          "abstention_correct": false,
+          "fact_supported": null,
+          "retrieval_ms": 0.4581,
+          "generation_ms": 0.0665,
+          "scores": [
+            {
+              "item_id": "gdg-budget-status",
+              "dense_similarity": 0.3333333333333333,
+              "lexical_score": 2,
+              "rrf_score": 0.03252247488101534
+            },
+            {
+              "item_id": "gdg-schedule",
+              "dense_similarity": 0.3779644730092272,
+              "lexical_score": 2,
+              "rrf_score": 0.03252247488101534
+            },
+            {
+              "item_id": "gdg-deadline",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": 1,
+              "rrf_score": 0.03149801587301587
+            },
+            {
+              "item_id": "gdg-access",
+              "dense_similarity": 0.17677669529663687,
+              "lexical_score": 1,
+              "rrf_score": 0.030798389007344232
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q14",
+          "kind": "prompt_injection",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-access",
+            "gdg-injection",
+            "gdg-deadline",
+            "gdg-prerequisites"
+          ],
+          "cited_ids": [
+            "gdg-access"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.3881,
+          "generation_ms": 0.06,
+          "scores": [
+            {
+              "item_id": "gdg-access",
+              "dense_similarity": 0.6123724356957945,
+              "lexical_score": 3,
+              "rrf_score": 0.03278688524590164
+            },
+            {
+              "item_id": "gdg-injection",
+              "dense_similarity": 0.24077170617153845,
+              "lexical_score": 2,
+              "rrf_score": 0.03225806451612903
+            },
+            {
+              "item_id": "gdg-deadline",
+              "dense_similarity": 0.2357022603955159,
+              "lexical_score": 1,
+              "rrf_score": 0.03149801587301587
+            },
+            {
+              "item_id": "gdg-prerequisites",
+              "dense_similarity": 0.2182178902359924,
+              "lexical_score": 1,
+              "rrf_score": 0.03076923076923077
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q15",
+          "kind": "superseded_decision",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-venue-old",
+            "gdg-venue-new",
+            "gdg-deadline",
+            "gdg-access"
+          ],
+          "cited_ids": [
+            "gdg-venue-old"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.3751,
+          "generation_ms": 0.0699,
+          "scores": [
+            {
+              "item_id": "gdg-venue-old",
+              "dense_similarity": 0.8164965809277261,
+              "lexical_score": 4,
+              "rrf_score": 0.03278688524590164
+            },
+            {
+              "item_id": "gdg-venue-new",
+              "dense_similarity": 0.5,
+              "lexical_score": 3,
+              "rrf_score": 0.03225806451612903
+            },
+            {
+              "item_id": "gdg-deadline",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": 1,
+              "rrf_score": 0.03125763125763126
+            },
+            {
+              "item_id": "gdg-access",
+              "dense_similarity": 0.17677669529663687,
+              "lexical_score": 1,
+              "rrf_score": 0.030798389007344232
+            }
+          ]
+        },
+        {
+          "case_id": "gdg-q16",
+          "kind": "prompt_injection",
+          "organization_id": "gdg_mcet",
+          "selected_ids": [
+            "gdg-injection"
+          ],
+          "cited_ids": [],
+          "abstained": true,
+          "abstention_correct": true,
+          "fact_supported": null,
+          "retrieval_ms": 0.3622,
+          "generation_ms": 0.005,
+          "scores": [
+            {
+              "item_id": "gdg-injection",
+              "dense_similarity": 0.47286624374346037,
+              "lexical_score": 5,
+              "rrf_score": 0.03278688524590164
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q01",
+          "kind": "grounded",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-schedule",
+            "tech-deadline",
+            "tech-access",
+            "tech-prerequisites"
+          ],
+          "cited_ids": [
+            "tech-schedule"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.6119,
+          "generation_ms": 0.0833,
+          "scores": [
+            {
+              "item_id": "tech-schedule",
+              "dense_similarity": 0.5345224838248487,
+              "lexical_score": 2,
+              "rrf_score": 0.03278688524590164
+            },
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.2886751345948129,
+              "lexical_score": 1,
+              "rrf_score": 0.031754032258064516
+            },
+            {
+              "item_id": "tech-access",
+              "dense_similarity": 0.24999999999999994,
+              "lexical_score": 1,
+              "rrf_score": 0.03128054740957967
+            },
+            {
+              "item_id": "tech-prerequisites",
+              "dense_similarity": 0.26726124191242434,
+              "lexical_score": 1,
+              "rrf_score": 0.031009615384615385
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q02",
+          "kind": "superseded_decision",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-venue-new",
+            "tech-venue-old",
+            "tech-deadline",
+            "tech-access"
+          ],
+          "cited_ids": [
+            "tech-venue-new"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.5347,
+          "generation_ms": 0.0866,
+          "scores": [
+            {
+              "item_id": "tech-venue-new",
+              "dense_similarity": 0.6324555320336759,
+              "lexical_score": 4,
+              "rrf_score": 0.03278688524590164
+            },
+            {
+              "item_id": "tech-venue-old",
+              "dense_similarity": 0.6123724356957946,
+              "lexical_score": 3,
+              "rrf_score": 0.03225806451612903
+            },
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": 1,
+              "rrf_score": 0.03125763125763126
+            },
+            {
+              "item_id": "tech-access",
+              "dense_similarity": 0.17677669529663687,
+              "lexical_score": 1,
+              "rrf_score": 0.030798389007344232
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q03",
+          "kind": "grounded",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-speaker",
+            "tech-deadline",
+            "tech-access",
+            "tech-prerequisites"
+          ],
+          "cited_ids": [
+            "tech-speaker"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.5291,
+          "generation_ms": 0.0944,
+          "scores": [
+            {
+              "item_id": "tech-speaker",
+              "dense_similarity": 0.50709255283711,
+              "lexical_score": 3,
+              "rrf_score": 0.03278688524590164
+            },
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.18257418583505539,
+              "lexical_score": 1,
+              "rrf_score": 0.031754032258064516
+            },
+            {
+              "item_id": "tech-access",
+              "dense_similarity": 0.15811388300841894,
+              "lexical_score": 1,
+              "rrf_score": 0.03128054740957967
+            },
+            {
+              "item_id": "tech-prerequisites",
+              "dense_similarity": 0.1690308509457033,
+              "lexical_score": 1,
+              "rrf_score": 0.031009615384615385
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q04",
+          "kind": "grounded",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-prerequisites",
+            "tech-deadline",
+            "tech-access",
+            "tech-budget-status"
+          ],
+          "cited_ids": [
+            "tech-prerequisites"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.4853,
+          "generation_ms": 0.0594,
+          "scores": [
+            {
+              "item_id": "tech-prerequisites",
+              "dense_similarity": 0.6546536707079772,
+              "lexical_score": 3,
+              "rrf_score": 0.03278688524590164
+            },
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.2357022603955159,
+              "lexical_score": 1,
+              "rrf_score": 0.031754032258064516
+            },
+            {
+              "item_id": "tech-access",
+              "dense_similarity": 0.2041241452319315,
+              "lexical_score": 1,
+              "rrf_score": 0.03128054740957967
+            },
+            {
+              "item_id": "tech-budget-status",
+              "dense_similarity": 0.19245008972987526,
+              "lexical_score": 1,
+              "rrf_score": 0.030798389007344232
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q05",
+          "kind": "grounded",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-repository",
+            "tech-deadline",
+            "tech-access",
+            "tech-prerequisites"
+          ],
+          "cited_ids": [
+            "tech-repository"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.4927,
+          "generation_ms": 0.0955,
+          "scores": [
+            {
+              "item_id": "tech-repository",
+              "dense_similarity": 0.769800358919501,
+              "lexical_score": 3,
+              "rrf_score": 0.03278688524590164
+            },
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.2357022603955159,
+              "lexical_score": 1,
+              "rrf_score": 0.031754032258064516
+            },
+            {
+              "item_id": "tech-access",
+              "dense_similarity": 0.2041241452319315,
+              "lexical_score": 1,
+              "rrf_score": 0.031054405392392875
+            },
+            {
+              "item_id": "tech-prerequisites",
+              "dense_similarity": 0.2182178902359924,
+              "lexical_score": 1,
+              "rrf_score": 0.031009615384615385
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q06",
+          "kind": "grounded",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-volunteers",
+            "tech-deadline",
+            "tech-access",
+            "tech-prerequisites"
+          ],
+          "cited_ids": [
+            "tech-volunteers"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.4368,
+          "generation_ms": 0.0737,
+          "scores": [
+            {
+              "item_id": "tech-volunteers",
+              "dense_similarity": 0.3849001794597505,
+              "lexical_score": 2,
+              "rrf_score": 0.03278688524590164
+            },
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.2357022603955159,
+              "lexical_score": 1,
+              "rrf_score": 0.031754032258064516
+            },
+            {
+              "item_id": "tech-access",
+              "dense_similarity": 0.2041241452319315,
+              "lexical_score": 1,
+              "rrf_score": 0.031054405392392875
+            },
+            {
+              "item_id": "tech-prerequisites",
+              "dense_similarity": 0.2182178902359924,
+              "lexical_score": 1,
+              "rrf_score": 0.031009615384615385
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q07",
+          "kind": "grounded",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-deadline",
+            "tech-prerequisites",
+            "tech-access",
+            "tech-budget-status"
+          ],
+          "cited_ids": [
+            "tech-deadline"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.4092,
+          "generation_ms": 0.0613,
+          "scores": [
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.7071067811865477,
+              "lexical_score": 3,
+              "rrf_score": 0.03278688524590164
+            },
+            {
+              "item_id": "tech-prerequisites",
+              "dense_similarity": 0.2182178902359924,
+              "lexical_score": 1,
+              "rrf_score": 0.03149801587301587
+            },
+            {
+              "item_id": "tech-access",
+              "dense_similarity": 0.2041241452319315,
+              "lexical_score": 1,
+              "rrf_score": 0.03128054740957967
+            },
+            {
+              "item_id": "tech-budget-status",
+              "dense_similarity": 0.19245008972987526,
+              "lexical_score": 1,
+              "rrf_score": 0.030798389007344232
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q08",
+          "kind": "overlapping_terms",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-budget-status"
+          ],
+          "cited_ids": [
+            "tech-budget-status"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.3723,
+          "generation_ms": 0.0417,
+          "scores": [
+            {
+              "item_id": "tech-budget-status",
+              "dense_similarity": 0.4714045207910316,
+              "lexical_score": 2,
+              "rrf_score": 0.03278688524590164
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q09",
+          "kind": "restricted",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-budget-private",
+            "tech-budget-status",
+            "tech-retro-private",
+            "tech-deadline"
+          ],
+          "cited_ids": [
+            "tech-budget-private"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.4207,
+          "generation_ms": 0.1216,
+          "scores": [
+            {
+              "item_id": "tech-budget-private",
+              "dense_similarity": 0.7385489458759966,
+              "lexical_score": 4,
+              "rrf_score": 0.03278688524590164
+            },
+            {
+              "item_id": "tech-budget-status",
+              "dense_similarity": 0.5443310539518174,
+              "lexical_score": 3,
+              "rrf_score": 0.03225806451612903
+            },
+            {
+              "item_id": "tech-retro-private",
+              "dense_similarity": 0.4330127018922194,
+              "lexical_score": 2,
+              "rrf_score": 0.031746031746031744
+            },
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.3333333333333334,
+              "lexical_score": 1,
+              "rrf_score": 0.031009615384615385
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q10",
+          "kind": "scope_denied",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-budget-status",
+            "tech-deadline",
+            "tech-venue-old",
+            "tech-prerequisites"
+          ],
+          "cited_ids": [],
+          "abstained": true,
+          "abstention_correct": true,
+          "fact_supported": null,
+          "retrieval_ms": 0.5639,
+          "generation_ms": 0.0389,
+          "scores": [
+            {
+              "item_id": "tech-budget-status",
+              "dense_similarity": 0.3333333333333333,
+              "lexical_score": 1,
+              "rrf_score": 0.03278688524590164
+            },
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": null,
+              "rrf_score": 0.016129032258064516
+            },
+            {
+              "item_id": "tech-venue-old",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": null,
+              "rrf_score": 0.015873015873015872
+            },
+            {
+              "item_id": "tech-prerequisites",
+              "dense_similarity": 0.1889822365046136,
+              "lexical_score": null,
+              "rrf_score": 0.015625
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q11",
+          "kind": "restricted",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-retro-private",
+            "tech-budget-private",
+            "tech-budget-status",
+            "tech-deadline"
+          ],
+          "cited_ids": [
+            "tech-retro-private"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.7311,
+          "generation_ms": 0.1014,
+          "scores": [
+            {
+              "item_id": "tech-retro-private",
+              "dense_similarity": 0.5303300858899106,
+              "lexical_score": 3,
+              "rrf_score": 0.03278688524590164
+            },
+            {
+              "item_id": "tech-budget-private",
+              "dense_similarity": 0.45226701686664544,
+              "lexical_score": 2,
+              "rrf_score": 0.03225806451612903
+            },
+            {
+              "item_id": "tech-budget-status",
+              "dense_similarity": 0.3333333333333333,
+              "lexical_score": 2,
+              "rrf_score": 0.031746031746031744
+            },
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": 1,
+              "rrf_score": 0.031009615384615385
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q12",
+          "kind": "scope_denied",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-budget-status",
+            "tech-deadline",
+            "tech-prerequisites",
+            "tech-access"
+          ],
+          "cited_ids": [],
+          "abstained": true,
+          "abstention_correct": true,
+          "fact_supported": null,
+          "retrieval_ms": 0.5896,
+          "generation_ms": 0.0488,
+          "scores": [
+            {
+              "item_id": "tech-budget-status",
+              "dense_similarity": 0.3333333333333333,
+              "lexical_score": 2,
+              "rrf_score": 0.03278688524590164
+            },
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": 1,
+              "rrf_score": 0.03200204813108039
+            },
+            {
+              "item_id": "tech-prerequisites",
+              "dense_similarity": 0.1889822365046136,
+              "lexical_score": 1,
+              "rrf_score": 0.03125
+            },
+            {
+              "item_id": "tech-access",
+              "dense_similarity": 0.17677669529663687,
+              "lexical_score": 1,
+              "rrf_score": 0.031054405392392875
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q13",
+          "kind": "missing_evidence",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-budget-status",
+            "tech-schedule",
+            "tech-deadline",
+            "tech-access"
+          ],
+          "cited_ids": [
+            "tech-budget-status"
+          ],
+          "abstained": false,
+          "abstention_correct": false,
+          "fact_supported": null,
+          "retrieval_ms": 0.5606,
+          "generation_ms": 0.1065,
+          "scores": [
+            {
+              "item_id": "tech-budget-status",
+              "dense_similarity": 0.3333333333333333,
+              "lexical_score": 2,
+              "rrf_score": 0.03252247488101534
+            },
+            {
+              "item_id": "tech-schedule",
+              "dense_similarity": 0.3779644730092272,
+              "lexical_score": 2,
+              "rrf_score": 0.03252247488101534
+            },
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": 1,
+              "rrf_score": 0.03149801587301587
+            },
+            {
+              "item_id": "tech-access",
+              "dense_similarity": 0.17677669529663687,
+              "lexical_score": 1,
+              "rrf_score": 0.030798389007344232
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q14",
+          "kind": "prompt_injection",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-access",
+            "tech-injection",
+            "tech-deadline",
+            "tech-prerequisites"
+          ],
+          "cited_ids": [
+            "tech-access"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.5612,
+          "generation_ms": 0.0866,
+          "scores": [
+            {
+              "item_id": "tech-access",
+              "dense_similarity": 0.6123724356957945,
+              "lexical_score": 3,
+              "rrf_score": 0.03278688524590164
+            },
+            {
+              "item_id": "tech-injection",
+              "dense_similarity": 0.24077170617153845,
+              "lexical_score": 2,
+              "rrf_score": 0.03225806451612903
+            },
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.2357022603955159,
+              "lexical_score": 1,
+              "rrf_score": 0.03149801587301587
+            },
+            {
+              "item_id": "tech-prerequisites",
+              "dense_similarity": 0.2182178902359924,
+              "lexical_score": 1,
+              "rrf_score": 0.03076923076923077
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q15",
+          "kind": "superseded_decision",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-venue-old",
+            "tech-venue-new",
+            "tech-deadline",
+            "tech-access"
+          ],
+          "cited_ids": [
+            "tech-venue-old"
+          ],
+          "abstained": false,
+          "abstention_correct": true,
+          "fact_supported": true,
+          "retrieval_ms": 0.5667,
+          "generation_ms": 0.0959,
+          "scores": [
+            {
+              "item_id": "tech-venue-old",
+              "dense_similarity": 0.8164965809277261,
+              "lexical_score": 4,
+              "rrf_score": 0.03278688524590164
+            },
+            {
+              "item_id": "tech-venue-new",
+              "dense_similarity": 0.4743416490252569,
+              "lexical_score": 3,
+              "rrf_score": 0.03225806451612903
+            },
+            {
+              "item_id": "tech-deadline",
+              "dense_similarity": 0.20412414523193154,
+              "lexical_score": 1,
+              "rrf_score": 0.03125763125763126
+            },
+            {
+              "item_id": "tech-access",
+              "dense_similarity": 0.17677669529663687,
+              "lexical_score": 1,
+              "rrf_score": 0.030798389007344232
+            }
+          ]
+        },
+        {
+          "case_id": "tech-q16",
+          "kind": "prompt_injection",
+          "organization_id": "tech_org",
+          "selected_ids": [
+            "tech-injection"
+          ],
+          "cited_ids": [],
+          "abstained": true,
+          "abstention_correct": true,
+          "fact_supported": null,
+          "retrieval_ms": 0.6265,
+          "generation_ms": 0.0077,
+          "scores": [
+            {
+              "item_id": "tech-injection",
+              "dense_similarity": 0.47286624374346037,
+              "lexical_score": 5,
+              "rrf_score": 0.03278688524590164
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "security_violations": 0,
+  "failures": [
+    {
+      "case_id": "gdg-q13",
+      "strategy": "vector_only",
+      "reasons": [
+        "unanswerable_answered"
+      ]
+    },
+    {
+      "case_id": "tech-q13",
+      "strategy": "vector_only",
+      "reasons": [
+        "unanswerable_answered"
+      ]
+    },
+    {
+      "case_id": "gdg-q13",
+      "strategy": "hybrid",
+      "reasons": [
+        "unanswerable_answered"
+      ]
+    },
+    {
+      "case_id": "tech-q13",
+      "strategy": "hybrid",
+      "reasons": [
+        "unanswerable_answered"
+      ]
+    }
+  ],
+  "limitations": [
+    "Synthetic corpus; no real-provider inference is measured.",
+    "Offline lexical overlap is not PostgreSQL full-text ranking.",
+    "Prompt-injection checks cover defined boundaries; they are not a universal model robustness guarantee."
+  ],
+  "dataset_sha256": "b07620aa4af91f4f1a2788f1db04ab8db5e911d4ade0cf434ed287330791ce3c"
+}

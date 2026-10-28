@@ -9,7 +9,8 @@ from app.core.canonical import (
 
 class GraphState(BaseModel):
     query: str
-    organization_id: str = "gdg_mcet"
+    organization_id: str
+    platform: str = "web_chat"
     access_context: Optional[AccessContext] = None
     
     # Session / Multi-Turn persistence

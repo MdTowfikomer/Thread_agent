@@ -27,6 +27,8 @@ services:
         value: "false"
       - key: THREAD_JWT_SECRET
         sync: false
+      - key: THREAD_MASTER_ENCRYPTION_KEY
+        sync: false
       - key: GITHUB_WEBHOOK_SECRET
         sync: false
       - key: SUPABASE_URL
@@ -47,7 +49,5 @@ services:
         sync: false
       - key: SLACK_SIGNING_SECRET
         sync: false
-      - key: GEMINI_API_KEY
-        sync: false
       - key: ALLOWED_ORIGINS
-        value: "https://thread-agent.vercel.app,http://localhost:5173"
+        value: "https://thread-agent-xi.vercel.app,https://thread-agent.vercel.app,http://localhost:5173"

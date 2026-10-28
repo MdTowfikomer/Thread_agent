@@ -12,7 +12,7 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
-  workspaceName = 'GDG MCET',
+  workspaceName = 'Workspace',
   isAuthenticated,
   onNavigate,
   onOpenAuthModal,
@@ -30,12 +30,12 @@ export const Navbar: React.FC<NavbarProps> = ({
           <span className="truncate text-sm text-neutral-500">{workspaceName}</span>
         </div>
         <div className="flex items-center gap-4 text-sm">
-          <span className="hidden text-neutral-500 sm:block">Live community workspace</span>
+          <span className="hidden text-neutral-500 sm:block">Organizational memory</span>
           {isAuthenticated ? (
             <div className="flex items-center gap-3">
               <span className="text-neutral-400">{userLabel === 'authenticated' ? 'Demo Viewer' : userLabel}</span>
               {onSignOut && (
-                <button onClick={onSignOut} title="End demo session" className="text-neutral-500 transition-colors hover:text-neutral-100">
+                <button onClick={onSignOut} title="Sign out" aria-label="Sign out" className="grid min-h-11 min-w-11 place-items-center text-neutral-500 transition-colors hover:text-neutral-100">
                   <LogOut className="h-4 w-4" aria-hidden="true" />
                 </button>
               )}

@@ -22,6 +22,11 @@ class MemoryStore:
         self.force_deterministic: bool = False
 
     def _get_embedding(self, text: str) -> Optional[List[float]]:
+        from app.tenancy.repository import tenant_repository
+        if tenant_repository.configured:
+            from app.tenancy.models import TenantModelNotConfiguredError
+            # Legacy unscoped entry points cannot charge the server's key for a tenant.
+            raise TenantModelNotConfiguredError()
         text = text.replace("\n", " ").strip()
         
         # 0. Force deterministic offline vector for explicit local tests ONLY
@@ -76,6 +81,15 @@ class MemoryStore:
         self._active_model_name = "sparse_only"
         return None
 
+    def embedding_result(self, text: str, organization_id: str, *, document=False):
+        """Return vector and model together; tenant executions never share model labels."""
+        from app.tenancy.repository import tenant_repository
+        if tenant_repository.configured:
+            from app.tenancy.models import embed
+            return embed(organization_id, text, document=document)
+        vector = self._get_embedding(text)
+        return vector, getattr(self, "_active_model_name", "sparse_only")
+
     def _deterministic_vector(self, text: str) -> List[float]:
         dim = settings.EMBEDDING_DIMENSION  # Enforce exact 768 dimensions
         vec = [0.0] * dim
@@ -97,6 +111,7 @@ class MemoryStore:
 
     def add_chunk(self, chunk: MemoryChunk):
         # Validate embedding dimensions and reject mismatches
+        active_model = chunk.provenance.get("embedding_model", "unknown")
         if chunk.embedding is not None:
             if len(chunk.embedding) != settings.EMBEDDING_DIMENSION:
                 raise ValueError(
@@ -104,9 +119,10 @@ class MemoryStore:
                 )
         else:
             text_to_embed = f"{chunk.title or ''} {chunk.author} {' '.join(chunk.tags)}: {chunk.content}"
-            chunk.embedding = self._get_embedding(text_to_embed)
-
-        active_model = getattr(self, "_active_model_name", "sparse_only")
+            chunk.embedding, active_model = self.embedding_result(text_to_embed, chunk.organization_id, document=True)
+            if chunk.embedding is not None:
+                chunk.provenance["embedding_model"] = active_model
+                chunk.provenance["embedding_dimension"] = len(chunk.embedding)
         chunk.provenance.setdefault("embedding_model", active_model if chunk.embedding is not None else "sparse_only")
         chunk.provenance.setdefault("embedding_dimension", settings.EMBEDDING_DIMENSION if chunk.embedding is not None else 0)
 

@@ -1,4 +1,5 @@
 import logging
+import os
 import uuid
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timezone
@@ -15,6 +16,7 @@ from app.core.canonical import (
     ManualLinkRequestStatus
 )
 from app.core.membership import membership_store
+from app.tenancy.repository import tenant_repository
 
 logger = logging.getLogger("thread.identity")
 
@@ -75,6 +77,9 @@ class CrossChannelIdentityService:
 
     def _init_defaults(self):
         """Initializes default verified links matching initial seed members."""
+        # Fixtures are explicit offline-only data, never production import side effects.
+        if tenant_repository.configured or os.getenv("THREAD_ALLOW_OFFLINE_IDENTITY") != "1":
+            return
         # Arjun: Discord Lead Organizer
         self.link_account(
             organization_id="gdg_mcet",
@@ -459,7 +464,8 @@ class CrossChannelIdentityService:
         collision_flag = False
         check_names = [n.strip().lower() for n in (username, display_name) if n and n.strip()]
         if check_names:
-            for uid, person in membership_store._persons.items():
+            for person in membership_store.list_people():
+                uid = person.id
                 p_name = person.name.lower() if person.name else ""
                 p_email_user = person.email.split('@')[0].lower() if person.email else ""
                 for cn in check_names:

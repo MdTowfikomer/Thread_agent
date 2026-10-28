@@ -2,9 +2,12 @@ import os
 from contextlib import asynccontextmanager
 from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
+from starlette.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.core.organizations import WORKSPACES, get_workspace
+from app.core.organizations import get_workspace
 from app.core.auth import AuthenticatedPrincipal, get_current_principal
 from app.core.canonical import PermissionLevel
 from app.data.seeds import get_seed_data
@@ -19,6 +22,10 @@ from app.api.webhooks import router as webhooks_router
 from app.api.identity import router as identity_router
 from app.api.delivery import router as delivery_router
 from app.api.session import router as session_router
+from app.api.v2.auth import router as v2_auth_router
+from app.api.v2.organizations import router as v2_organizations_router
+from app.api.v2.credentials import router as v2_credentials_router
+from app.api.v2.traces import router as v2_traces_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -95,8 +102,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["X-Thread-Trace-Id", "X-Thread-Conversation-Id"],
 )
 
 # Include routers
@@ -106,6 +114,18 @@ app.include_router(webhooks_router, prefix=settings.API_PREFIX)
 app.include_router(identity_router, prefix=settings.API_PREFIX)
 app.include_router(delivery_router, prefix=settings.API_PREFIX)
 app.include_router(session_router, prefix=settings.API_PREFIX)
+app.include_router(v2_auth_router)
+app.include_router(v2_organizations_router)
+app.include_router(v2_credentials_router)
+app.include_router(v2_traces_router)
+
+
+@app.exception_handler(RequestValidationError)
+async def safe_validation_error(request, exc):
+    if request.url.path.endswith("/credentials/model"):
+        # FastAPI's default validation detail includes rejected input values.
+        return JSONResponse(status_code=422, content={"detail": "Check the provider, supported chat model, and API key fields."}, headers={"Cache-Control": "no-store"})
+    return await request_validation_exception_handler(request, exc)
 
 
 @app.get("/health")
@@ -130,8 +150,10 @@ def get_gateway_readiness(
     return discord_gateway_bot.get_readiness_signal()
 
 @app.get(f"{settings.API_PREFIX}/workspace")
-def get_current_workspace(organization_id: str = "gdg_mcet"):
-    ws = get_workspace(organization_id)
+def get_current_workspace(organization_id: Optional[str] = None, principal: AuthenticatedPrincipal = Depends(get_current_principal)):
+    if organization_id is not None and organization_id != principal.organization_id:
+        raise HTTPException(403, "Cross-organization access is denied.")
+    ws = get_workspace(principal.organization_id)
     return {
         "id": ws.id,
         "name": ws.name,
@@ -200,6 +222,15 @@ def list_connections(
     if organization_id is not None and organization_id != principal.organization_id:
         raise HTTPException(status_code=403, detail="Cross-organization access is denied.")
     organization_id = principal.organization_id
+    # The database owns connector configuration; do not expose stale process caches.
+    if os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL"):
+        try:
+            guild_installation_store.load_from_database()
+            github_binding_store._load_from_database(fail_on_error=True)
+            telegram_binding_store._load_from_database()
+            slack_binding_store._load_from_database()
+        except Exception:
+            raise HTTPException(503, "Platform bindings are unavailable. Retry shortly.") from None
     return {
         "organization_id": organization_id,
         "connections": {

@@ -16,7 +16,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 load_dotenv()
 
 def get_production_embedder(
-    allow_deterministic: bool = False
+    allow_deterministic: bool = False,
+    organization_id: Optional[str] = None
 ) -> Callable[[str], Tuple[List[float], str, int]]:
     """
     Constructs a strict, fail-closed embedding provider for re-embedding.
@@ -26,6 +27,15 @@ def get_production_embedder(
     - Only falls back to deterministic-v1 when allow_deterministic=True is explicitly passed (e.g. offline tests),
       and strictly records 'deterministic-v1' as the model label rather than claiming Gemini.
     """
+    from app.tenancy.repository import tenant_repository
+    if tenant_repository.configured:
+        from app.tenancy.models import embed, TenantModelNotConfiguredError
+        if not organization_id:
+            raise TenantModelNotConfiguredError()
+        def tenant_embed(text):
+            vector, model = embed(organization_id, text, document=True)
+            return vector, model, len(vector)
+        return tenant_embed
     if settings.has_gemini:
         try:
             from langchain_google_genai import GoogleGenerativeAIEmbeddings
@@ -110,7 +120,11 @@ class ReembeddingJob:
         self.max_retries = max_retries
         self.allow_deterministic = allow_deterministic
         self.embedding_model = embedding_model
-        self.embed_fn = embed_fn or get_production_embedder(allow_deterministic=allow_deterministic)
+        from app.tenancy.repository import tenant_repository
+        self._uses_tenant_keys = tenant_repository.configured and embed_fn is None
+        # Schema inspection/finalization makes no provider call and must not
+        # require credentials. Resolve a provider only when embedding a row.
+        self.embed_fn = embed_fn
 
     def get_pending_count(self, conn) -> int:
         """Returns total number of chunks still pending re-embedding or with expired leases."""
@@ -162,7 +176,7 @@ class ReembeddingJob:
                     FROM claimable
                     WHERE memory_chunks.id = claimable.id
                     RETURNING memory_chunks.id, memory_chunks.title, memory_chunks.content, 
-                              memory_chunks.author, memory_chunks.tags, memory_chunks.reembed_attempts;
+                              memory_chunks.author, memory_chunks.tags, memory_chunks.reembed_attempts, memory_chunks.organization_id;
                 """, (batch_limit, str(self.lease_seconds)))
                 rows = cur.fetchall()
                 conn.commit()
@@ -170,7 +184,7 @@ class ReembeddingJob:
                 conn.rollback()
                 logger.warning(f"Lease acquisition query failed, attempting basic select: {e}")
                 cur.execute("""
-                    SELECT id, title, content, author, tags
+                    SELECT id, title, content, author, tags, organization_id
                     FROM memory_chunks
                     WHERE embedding_status = 'pending_reembed'
                     ORDER BY id ASC
@@ -195,7 +209,13 @@ class ReembeddingJob:
             text_to_embed = f"{title} {author} {tag_str}: {content}".strip()
 
             try:
-                result = self.embed_fn(text_to_embed)
+                if self._uses_tenant_keys:
+                    embedder = get_production_embedder(organization_id=row["organization_id"])
+                    result = embedder(text_to_embed)
+                else:
+                    if self.embed_fn is None:
+                        self.embed_fn = get_production_embedder(allow_deterministic=self.allow_deterministic)
+                    result = self.embed_fn(text_to_embed)
 
                 if isinstance(result, tuple) and len(result) >= 3:
                     vector, model_name, dim = result[0], result[1], result[2]

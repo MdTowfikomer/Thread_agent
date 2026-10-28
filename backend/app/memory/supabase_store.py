@@ -31,7 +31,8 @@ class SupabaseMemoryStore:
 
     @property
     def client(self):
-        if not self.is_configured:
+        # Direct PostgreSQL configuration does not supply REST client credentials.
+        if not (self.url and self.key):
             return None
         if self._client is None:
             try:
@@ -400,7 +401,8 @@ class SupabaseMemoryStore:
         organization_id: str,
         allowed_scopes: List[PermissionLevel],
         match_count: int = 10,
-        rrf_k: int = 60
+        rrf_k: int = 60,
+        embedding_model: Optional[str] = None
     ) -> List[Tuple[float, MemoryChunk, float, float, int, int]]:
         """
         Execute pre-retrieval ACL filtered hybrid search via Supabase RPC or direct PostgreSQL query.
@@ -431,7 +433,7 @@ class SupabaseMemoryStore:
                     "filter_organization_id": organization_id,
                     "filter_permissions": scope_values,
                     "rrf_k": rrf_k,
-                    "filter_embedding_model": settings.DEFAULT_EMBEDDING_MODEL
+                    "filter_embedding_model": embedding_model or settings.DEFAULT_EMBEDDING_MODEL
                 }
                 res = self.client.rpc("hybrid_search", rpc_params).execute()
                 rows = res.data or []
@@ -465,7 +467,7 @@ class SupabaseMemoryStore:
                                 author, author_role, title, content, permission, tags, entities,
                                 provenance, similarity, fts_rank, combined_score, dense_rank, lexical_rank
                             FROM hybrid_search(%s, %s::vector, %s, %s, %s, %s, %s);
-                        """, (query, embedding_str, match_count, organization_id, scope_values, rrf_k, settings.DEFAULT_EMBEDDING_MODEL))
+                        """, (query, embedding_str, match_count, organization_id, scope_values, rrf_k, embedding_model or settings.DEFAULT_EMBEDDING_MODEL))
                         rows = cur.fetchall()
                         results = []
                         for r in rows:

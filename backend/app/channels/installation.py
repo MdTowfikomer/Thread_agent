@@ -166,16 +166,30 @@ class GitHubRepositoryBindingStore:
     def __init__(self):
         self._bindings_by_id: Dict[str, GitHubRepositoryBinding] = {}
         self._bindings_by_name: Dict[str, GitHubRepositoryBinding] = {}
-        self._init_defaults()
+        self._load_from_database()
 
-    def _init_defaults(self):
-        # Authoritative binding for Thread_Agent production repository
-        self.register_binding(
-            repository_id="1371393965",
-            repository_name="mdtowfikomer/thread_agent",
-            organization_id="gdg_mcet",
-            installation_id="gh_inst_thread_agent"
-        )
+    def _load_from_database(self, fail_on_error: bool = False):
+        # Load configured bindings without creating or overwriting tenant ownership.
+        db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+        if not db_url:
+            return
+        try:
+            import psycopg2
+            with psycopg2.connect(db_url, connect_timeout=5) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT id, organization_id, installation_id, repository_id, repository_name, is_active, bound_at, metadata FROM github_repository_bindings")
+                    rows = cur.fetchall()
+        except Exception:
+            if fail_on_error:
+                raise RuntimeError("GitHub bindings could not be loaded.") from None
+            return
+        bindings = [GitHubRepositoryBinding(
+            id=row[0], organization_id=row[1], installation_id=row[2],
+            repository_id=row[3], repository_name=row[4], is_active=row[5],
+            bound_at=row[6], metadata=row[7] or {},
+        ) for row in rows]
+        self._bindings_by_id = {b.repository_id: b for b in bindings}
+        self._bindings_by_name = {b.repository_name.lower(): b for b in bindings}
 
     def register_binding(
         self,
@@ -268,7 +282,6 @@ class GitHubRepositoryBindingStore:
     def clear(self):
         self._bindings_by_id.clear()
         self._bindings_by_name.clear()
-        self._init_defaults()
 
 github_binding_store = GitHubRepositoryBindingStore()
 

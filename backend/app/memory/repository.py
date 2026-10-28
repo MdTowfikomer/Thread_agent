@@ -31,16 +31,20 @@ class MemoryRepository:
 
     def _prepare_chunk(self, chunk: MemoryChunk) -> MemoryChunk:
         """Validate embedding dimensions and stamp provenance."""
+        active_model = chunk.provenance.get("embedding_model", "unknown")
         if chunk.embedding is None:
             text_to_embed = f"{chunk.title or ''} {chunk.author} {' '.join(chunk.tags)}: {chunk.content}"
-            chunk.embedding = self.in_memory._get_embedding(text_to_embed)
+            chunk.embedding, active_model = self.in_memory.embedding_result(text_to_embed, chunk.organization_id, document=True)
+            if chunk.embedding is not None:
+                chunk.provenance["embedding_model"] = active_model
+                chunk.provenance["embedding_dimension"] = len(chunk.embedding)
 
         if chunk.embedding is not None:
             if len(chunk.embedding) != settings.EMBEDDING_DIMENSION:
                 raise ValueError(
                     f"Embedding dimension mismatch: expected {settings.EMBEDDING_DIMENSION}, got {len(chunk.embedding)}"
                 )
-            chunk.provenance.setdefault("embedding_model", getattr(self.in_memory, "_active_model_name", settings.DEFAULT_EMBEDDING_MODEL))
+            chunk.provenance.setdefault("embedding_model", active_model)
             chunk.provenance.setdefault("embedding_dimension", settings.EMBEDDING_DIMENSION)
             chunk.embedding_status = "ready"
         else:

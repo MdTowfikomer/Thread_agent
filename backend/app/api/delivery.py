@@ -21,6 +21,8 @@ def send_agent_message(
 ):
     try:
         return service.send_message(principal, request.platform, request.destination_id, request.query, request.idempotency_key)
+    except HTTPException:
+        raise
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
     except ValueError as exc:

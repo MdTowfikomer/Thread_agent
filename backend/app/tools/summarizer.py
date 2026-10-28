@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+from fastapi import HTTPException
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
 
@@ -122,7 +123,7 @@ class SummarizerAssistant:
 
         if not messages:
             return (
-                f"📝 **Channel Discussion Summary (Past {window_hours}h)**\n\n"
+                f"**Channel Discussion Summary (Past {window_hours}h)**\n\n"
                 f"No authorized channel discussion was found within the last {window_hours} hours to summarize.\n"
                 f"Once team members exchange messages in this channel, use `!summary` for a structured recap!"
             )
@@ -134,17 +135,23 @@ class SummarizerAssistant:
             transcript_lines.append(f"[{ts}] {m['author']}: {m['content']}")
         transcript = "\n".join(transcript_lines)
 
-        from app.graph.workflow import get_llm
-        llm = get_llm()
+        from app.graph.workflow import get_llm, invoke_llm_with_fallback
+        from app.tenancy.repository import tenant_repository
+        from app.tenancy.auth import TenantContext
+        from app.core.organizations import get_workspace
+        tenant_context = None
+        if tenant_repository.configured:
+            tenant_context = TenantContext(organization_id, access_context.user_id if access_context else "anon", access_context.role_id if access_context else "member")
+        llm = get_llm(tenant_context) if tenant_context else get_llm()
         if llm:
-            prompt = f"""You are an executive conversation summarizer for GDG MCET.
+            prompt = f"""You are an executive conversation summarizer for {get_workspace(organization_id).name}.
 Analyze the following authentic channel discussion from the past {window_hours} hours.
 Produce a structured Markdown summary strictly based on the transcript below.
 
 Include:
-- 📌 **Main Topics Discussed** (1-3 clear bullet points)
-- 💡 **Key Decisions & Takeaways** (1-3 clear bullet points)
-- 🚀 **Next Steps / Action Items** (if applicable)
+- **Main Topics Discussed** (1-3 clear bullet points)
+- **Key Decisions & Takeaways** (1-3 clear bullet points)
+- **Next Steps / Action Items** (if applicable)
 
 CRITICAL RULES:
 - Only summarize facts, names, and topics present in the transcript. Never invent or hallucinate discussion points.
@@ -154,19 +161,19 @@ Channel Discussion Transcript ({len(messages)} messages):
 {transcript}
 """
             try:
-                from app.channels.formatter import coerce_model_text
-                res = llm.invoke(prompt)
-                raw_content = res.content if hasattr(res, "content") else res
-                content = coerce_model_text(raw_content)
-                return f"📝 **Channel Discussion Summary (Past {window_hours}h — {len(messages)} messages):**\n\n{content}"
-            except Exception as e:
-                logger.warning(f"LLM summarization failed: {e}")
+                content = invoke_llm_with_fallback(llm, prompt, tenant_context=tenant_context)
+                if content:
+                    return f"**Channel Discussion Summary (Past {window_hours}h — {len(messages)} messages):**\n\n{content}"
+            except HTTPException:
+                raise
+            except Exception:
+                logger.warning("LLM summarization failed; provider details withheld.")
 
         # Deterministic fallback summary
         first_author = messages[0]["author"]
         last_author = messages[-1]["author"]
         return (
-            f"📝 **Channel Discussion Summary (Past {window_hours}h — {len(messages)} messages):**\n\n"
+            f"**Channel Discussion Summary (Past {window_hours}h — {len(messages)} messages):**\n\n"
             f"- **Recent Activity**: {len(messages)} messages recorded between {messages[0]['timestamp']} and {messages[-1]['timestamp']}.\n"
             f"- **Active Participants**: {', '.join(sorted(set(m['author'] for m in messages))[:5])}\n"
             f"- **Latest Update**: {last_author} said: \"{messages[-1]['content'][:120]}...\""

@@ -141,12 +141,12 @@ class EventAssistant:
         """
         if not events:
             return (
-                "📅 **Community Events**\n\n"
+                "**Community Events**\n\n"
                 "There are currently no published events scheduled for GDG MCET.\n"
                 "Stay tuned to this channel for future workshop and hackathon announcements!"
             )
 
-        lines = ["📅 **Upcoming Community Events for GDG MCET:**\n"]
+        lines = ["**Upcoming Community Events for GDG MCET:**\n"]
         for idx, ev in enumerate(events, 1):
             st = ev.get("start_time")
             if isinstance(st, datetime):
@@ -155,16 +155,16 @@ class EventAssistant:
                 date_str = str(st)
 
             lines.append(f"### {idx}. {ev.get('title')}")
-            lines.append(f"⏱ **When**: {date_str}")
+            lines.append(f"**When**: {date_str}")
             if ev.get("location_or_url"):
-                lines.append(f"📍 **Where**: {ev.get('location_or_url')}")
+                lines.append(f"**Where**: {ev.get('location_or_url')}")
             if ev.get("description"):
-                lines.append(f"ℹ️ **About**: {ev.get('description')}")
+                lines.append(f"**About**: {ev.get('description')}")
             speakers = ev.get("speakers")
             if speakers:
-                lines.append(f"🎙 **Speakers / Hosts**: {', '.join(speakers)}")
+                lines.append(f"**Speakers / Hosts**: {', '.join(speakers)}")
             if ev.get("rsvp_url"):
-                lines.append(f"🔗 **RSVP Link**: [Register Here]({ev.get('rsvp_url')})")
+                lines.append(f"**RSVP Link**: [Register Here]({ev.get('rsvp_url')})")
             lines.append("")
 
         lines.append("*(Type `!events` anytime to get the latest schedule!)*")

@@ -95,9 +95,10 @@ def run_preflight() -> int:
                         missing = {"discord_guild_installations", "channel_policies"} - found_tables
                         errors.append(f"Missing required database tables: {missing}. Run migrations first.")
                         print(f"[FAIL] Authoritative Schema: Missing tables {missing}")
-        except Exception as exc:
-            errors.append(f"PostgreSQL connectivity failure: {type(exc).__name__}: {exc}")
-            print(f"[FAIL] PostgreSQL connectivity: {type(exc).__name__}: {exc}")
+        except Exception:
+            message = "PostgreSQL connectivity failure: check the database URL, credentials, and network availability."
+            errors.append(message)
+            print(f"[FAIL] {message}")
     elif os.getenv("THREAD_MOCK_DB_PREFLIGHT") == "1":
         print("[OK]   PostgreSQL connectivity: Mocked for preflight smoke test")
         print("[OK]   Authoritative Schema: Mocked for preflight smoke test")

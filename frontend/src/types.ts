@@ -16,6 +16,14 @@ export interface AgentTraceStep {
   status: string;
   message: string;
   timestamp: string;
+  provider?: string;
+  model_name?: string;
+  operation?: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  is_estimated?: boolean;
+  usage_source?: string;
+  latency_ms?: number;
 }
 
 export interface RoleAgent {
@@ -53,6 +61,9 @@ export interface ChatResponse {
   sufficient_evidence?: boolean;
   trace: AgentTraceStep[];
   organization_id?: string;
+  trace_id?: string;
+  conversation_id?: string;
+  turn_id?: string;
 }
 
 export interface MemoryItem {
@@ -113,4 +124,16 @@ export interface AuthSession {
   isAuthenticated: boolean;
   status: 'authenticated' | 'unauthenticated' | 'loading' | 'error';
   errorDetail?: string;
+}
+
+export interface ToolCallStep {
+  step: string;
+  label: string;
+  status: 'running' | 'completed' | 'failed';
+  message?: string;
+  tool?: string;
+  toolArgs?: string;
+  count?: number;
+  role?: string;
+  intent?: string;
 }

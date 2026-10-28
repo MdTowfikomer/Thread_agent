@@ -132,11 +132,11 @@ class AccountLinkTool:
 
         # 1. Check rate limit
         if self._check_rate_limit(targ_plat, targ_acc):
-            return False, "⛔ Too many failed redemption attempts. Please wait 15 minutes before trying again."
+            return False, "Too many failed redemption attempts. Please wait 15 minutes before trying again."
 
         conn = self._get_db_conn()
         if not conn:
-            return False, "❌ Identity link service is currently unavailable. Please try again shortly."
+            return False, "Identity link service is currently unavailable. Please try again shortly."
 
         token_hash = self._hash_token(raw_token)
 
@@ -161,7 +161,7 @@ class AccountLinkTool:
                         # Failed claim: increment attempt counter and record failure
                         cur.execute("UPDATE account_link_tokens SET attempts = attempts + 1 WHERE token_hash = %s;", (token_hash,))
                         self._record_failed_attempt(targ_plat, targ_acc)
-                        return False, "❌ Invalid, expired, or already redeemed link token. Please generate a fresh token with `!link`."
+                        return False, "Invalid, expired, or already redeemed link token. Please generate a fresh token with `!link`."
 
                     person_id, db_org_id, init_plat, init_acc, init_user = row[0], row[1], row[2], row[3], row[4]
 
@@ -169,7 +169,7 @@ class AccountLinkTool:
                     if init_plat == targ_plat:
                         # Revert atomic claim since it was invalid input
                         cur.execute("UPDATE account_link_tokens SET used = FALSE, used_at = NULL WHERE token_hash = %s;", (token_hash,))
-                        return False, f"⚠️ This link token was generated on {init_plat.capitalize()}. Please redeem it on a different platform (Discord, Slack, or Telegram)."
+                        return False, f"This link token was generated on {init_plat.capitalize()}. Please redeem it on a different platform (Discord, Slack, or Telegram)."
 
                     # 4. Map channel type enum
                     try:
@@ -191,7 +191,7 @@ class AccountLinkTool:
                     )
 
                     return True, (
-                        f"🎉 **Account Successfully Linked!**\n\n"
+                        f"**Account Successfully Linked!**\n\n"
                         f"Your **{target_platform.capitalize()}** account (`@{target_username}`) is now connected to your "
                         f"community profile (originating from **{init_plat.capitalize()}** as `@{init_user}`).\n"
                         f"Your conversation memory, access permissions, and roles are now synchronized across platforms!"
@@ -199,7 +199,7 @@ class AccountLinkTool:
         except Exception as e:
             logger.error(f"Redemption error for token hash {token_hash[:12]}: {e}")
             self._record_failed_attempt(targ_plat, targ_acc)
-            return False, f"❌ Failed to link account: {e}"
+            return False, f"Failed to link account: {e}"
         finally:
             try:
                 conn.close()

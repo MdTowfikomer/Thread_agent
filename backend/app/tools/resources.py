@@ -148,12 +148,12 @@ class ResourceAssistant:
         """
         if not resources:
             return (
-                "📚 **Community Resources & FAQs**\n\n"
+                "**Community Resources & FAQs**\n\n"
                 "No published resources or FAQs found matching your inquiry within your authorized scope.\n"
                 "Contact a community lead or check back later for updates."
             )
 
-        lines = ["📚 **Community Resources & Helpful Guides for GDG MCET:**\n"]
+        lines = ["**Community Resources & Helpful Guides for GDG MCET:**\n"]
         for idx, item in enumerate(resources, 1):
             category = item.get("category", "General")
             title = item.get("title")
@@ -161,9 +161,9 @@ class ResourceAssistant:
             desc = item.get("description")
 
             lines.append(f"### {idx}. [{category}] {title}")
-            lines.append(f"📝 {desc}")
+            lines.append(f"{desc}")
             if url:
-                lines.append(f"🔗 [Link / Documentation]({url})")
+                lines.append(f"[Link / Documentation]({url})")
             lines.append("")
 
         lines.append("*(Type `!faq` or `!resources <keyword>` anytime!)*")

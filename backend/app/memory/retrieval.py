@@ -1,6 +1,7 @@
 import os
 import re
 import numpy as np
+from fastapi import HTTPException
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Tuple
 from app.core.canonical import (
@@ -17,8 +18,8 @@ from app.memory.supabase_store import supabase_memory_store, SupabaseMemoryStore
 from app.core.membership import membership_store
 
 def derive_access_context(
-    user_id: str = "anon",
-    organization_id: str = "gdg_mcet",
+    user_id: str,
+    organization_id: str,
     role_id: Optional[str] = None
 ) -> AccessContext:
     """
@@ -54,12 +55,14 @@ class RetrievalService:
         org_id = access_context.organization_id
         exclude_set = set(exclude_message_ids or [])
         query_norm = query.strip().lower()
+        from app.tenancy.repository import tenant_repository
+        offline_vectors = not tenant_repository.configured and (os.environ.get("THREAD_FORCE_DETERMINISTIC_EMBEDDINGS") == "1" or self.store.force_deterministic)
 
         # 0. Check for Supabase Hybrid Retrieval (pgvector + FTS + RRF)
         use_supabase = (
             self.supabase_store
             and self.supabase_store.is_configured
-            and os.environ.get("THREAD_FORCE_DETERMINISTIC_EMBEDDINGS") != "1"
+            and not offline_vectors
         )
         if use_supabase:
             try:
@@ -68,6 +71,8 @@ class RetrievalService:
                 )
                 if supa_evidence is not None:
                     return supa_evidence
+            except HTTPException:
+                raise
             except Exception:
                 pass
 
@@ -124,10 +129,9 @@ class RetrievalService:
             )
 
         # 3. Embedding retrieval mode and scoring
-        raw_query_vec = self.store._get_embedding(query)
-        active_model = getattr(self.store, "_active_model_name", "sparse_only")
+        raw_query_vec, active_model = self.store.embedding_result(query, org_id)
 
-        if os.environ.get("THREAD_FORCE_DETERMINISTIC_EMBEDDINGS") == "1" or self.store.force_deterministic:
+        if offline_vectors:
             retrieval_mode = "deterministic_offline_test"
             query_model = active_model
         elif raw_query_vec is None or active_model == "sparse_only":
@@ -228,6 +232,7 @@ class RetrievalService:
                     snippet=snippet,
                     permission=chunk.permission,
                     source_uri=chunk.source_uri,
+                    source_timestamp=chunk.timestamp,
                     relevance_score=round(score, 3)
                 )
             )
@@ -299,8 +304,7 @@ class RetrievalService:
                 confidence_score=0.0
             )
 
-        query_vec = self.store._get_embedding(query)
-        active_model = getattr(self.store, "_active_model_name", "sparse_only")
+        query_vec, active_model = self.store.embedding_result(query, org_id)
         if query_vec is None:
             retrieval_mode = "sparse_only"
             query_model = "sparse_only"
@@ -313,12 +317,15 @@ class RetrievalService:
         else:
             retrieval_mode = "hybrid_vector_fts"
             query_model = active_model
+            from app.tenancy.repository import tenant_repository
+            tenant_options = {"embedding_model": active_model} if tenant_repository.configured else {}
             hybrid_results = self.supabase_store.hybrid_search(
                 query=query,
                 query_embedding=query_vec,
                 organization_id=org_id,
                 allowed_scopes=access_context.allowed_scopes,
-                match_count=top_k * 2
+                match_count=top_k * 2,
+                **tenant_options
             )
 
         if not hybrid_results:
@@ -368,6 +375,9 @@ class RetrievalService:
             chunk.id: round(combined_score, 4)
             for combined_score, chunk, _, _, _, _ in selected_items
         }
+        score_details = {chunk.id: {"dense_similarity": sim, "lexical_score": fts_rank,
+                                   "rrf_score": combined_score, "dense_rank": d_rank, "lexical_rank": l_rank}
+                         for combined_score, chunk, sim, fts_rank, d_rank, l_rank in selected_items}
         source_types = list({chunk.source_type for _, chunk, _, _, _, _ in selected_items})
 
         citations: List[Citation] = []
@@ -382,6 +392,7 @@ class RetrievalService:
                     snippet=snippet,
                     permission=chunk.permission,
                     source_uri=chunk.source_uri,
+                    source_timestamp=chunk.timestamp,
                     relevance_score=round(combined_score, 4)
                 )
             )
@@ -397,6 +408,7 @@ class RetrievalService:
             candidates_after_acl=candidates_after,
             selected_item_ids=selected_ids,
             scores=scores_map,
+            score_details=score_details,
             source_types=source_types,
             retrieval_strategy="supabase_pgvector_fts_rrf_pre_acl",
             query_embedding_model=query_model,

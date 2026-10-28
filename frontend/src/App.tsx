@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { LandingPage } from './pages/LandingPage';
 import { AuthPage } from './pages/AuthPage';
-import { WorkspacePage } from './pages/WorkspacePage';
+import { AccountWorkspacePage } from './pages/AccountWorkspacePage';
+import { InvitationPage } from './pages/InvitationPage';
 
 export function App() {
   const [currentRoute, setCurrentRoute] = useState<string>(() => {
@@ -18,7 +19,7 @@ export function App() {
 
   const navigate = (route: string) => {
     window.history.pushState({}, '', route);
-    setCurrentRoute(route);
+    setCurrentRoute(route.split('?')[0]);
     window.scrollTo(0, 0);
   };
 
@@ -27,10 +28,14 @@ export function App() {
   }
 
   if (currentRoute === '/auth') {
-    return <AuthPage onBack={() => navigate('/')} onAuthenticated={() => navigate('/app')} />;
+    return <AuthPage onBack={() => navigate('/')} onAuthenticated={() => {
+      const returnTo = new URLSearchParams(window.location.search).get('returnTo') || '';
+      navigate(/^\/invite\/[A-Za-z0-9_-]+$/.test(returnTo) ? returnTo : '/app');
+    }} />;
   }
 
-  return <WorkspacePage onNavigate={navigate} currentRoute={currentRoute} />;
+  if (currentRoute.startsWith('/invite/')) return <InvitationPage token={currentRoute.slice('/invite/'.length)} onNavigate={navigate} />;
+  return <AccountWorkspacePage onNavigate={navigate} currentRoute={currentRoute} />;
 }
 
 export default App;

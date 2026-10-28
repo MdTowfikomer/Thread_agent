@@ -732,20 +732,27 @@ def test_privileged_identity_link_creation_fails_closed_on_db_error(monkeypatch)
     key = "gdg_mcet:github:999888777"
     assert key not in service._account_links
 
-def test_github_runtime_default_binding_is_thread_agent_only():
-    """
-    Asserts that the production runtime store defaults exclusively to Thread_Agent
-    (repo ID 1371393965 / mdtowfikomer/thread_agent) and does NOT contain demo fixtures.
-    """
+def test_github_runtime_has_no_implicit_tenant_binding(monkeypatch):
     from app.channels.installation import GitHubRepositoryBindingStore
+    monkeypatch.delenv("SUPABASE_DB_URL", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     fresh_store = GitHubRepositoryBindingStore()
-    
-    # Assert Thread_Agent is bound
-    assert fresh_store.get_organization_for_repository("1371393965") == "gdg_mcet"
-    assert fresh_store.get_organization_for_repository(None, "MdTowfikomer/Thread_agent") == "gdg_mcet"
-    assert fresh_store.get_organization_for_repository(None, "mdtowfikomer/thread_agent") == "gdg_mcet"
+    assert fresh_store.get_organization_for_repository("1371393965") is None
+    assert fresh_store._bindings_by_id == {}
+    assert fresh_store._bindings_by_name == {}
 
-    # Assert legacy demo fixture is NOT a runtime default
-    assert "1029384" not in fresh_store._bindings_by_id
-    assert "gdgmcet/core-platform" not in fresh_store._bindings_by_name
+
+def test_github_startup_reads_rebound_workspace_without_writes(monkeypatch):
+    from unittest.mock import MagicMock
+    from app.channels.installation import GitHubRepositoryBindingStore
+    connection = MagicMock()
+    cursor = connection.__enter__.return_value.cursor.return_value.__enter__.return_value
+    cursor.fetchall.return_value = [("binding-id", "novaflow", None, "1371393965", "mdtowfikomer/thread_agent", True, datetime.now(timezone.utc), {})]
+    monkeypatch.setenv("SUPABASE_DB_URL", "synthetic-test-url")
+    monkeypatch.setattr("psycopg2.connect", lambda *a, **k: connection)
+    store = GitHubRepositoryBindingStore()
+    assert store.get_organization_for_repository("1371393965") == "novaflow"
+    assert store.get_organization_for_repository(None, "MdTowfikomer/Thread_agent") == "novaflow"
+    assert cursor.execute.call_count == 1
+    assert cursor.execute.call_args.args[0].startswith("SELECT ")
 

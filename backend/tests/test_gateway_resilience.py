@@ -436,7 +436,7 @@ def test_empty_mention_returns_helpful_greeting():
 
         await bot.handle_discord_mention_reply(mock_msg, client_mock)
         mock_msg.reply.assert_awaited_once_with(
-            "Hello! Ask me any question about GDG MCET records and I'll find grounded evidence.",
+            "Hello! Ask me any question about your workspace's records and I'll find grounded evidence.",
             mention_author=False
         )
 
@@ -470,11 +470,11 @@ def test_acl_denial_returns_access_restriction_message():
         mock_context = AsyncMock()
         mock_msg.channel.typing.return_value = mock_context
 
-        with patch("app.channels.outbound.channel_message_delivery_service.send_message", side_effect=PermissionError("Forbidden channel")):
+        with patch("app.channels.outbound.channel_message_delivery_service.send_prepared_message", side_effect=PermissionError("Forbidden channel")):
             await bot.handle_discord_mention_reply(mock_msg, client_mock)
 
         mock_msg.reply.assert_awaited_once_with(
-            "⚠️ Access restriction: Forbidden channel",
+            "Access restriction: Forbidden channel",
             mention_author=False
         )
 
@@ -669,7 +669,7 @@ def test_queue_saturation_drops_excess_and_keeps_mention_responsive():
         # Mention reply MUST have completed immediately (< 0.15s) and replied
         assert elapsed < 0.15
         msg3.reply.assert_awaited_once_with(
-            "Hello! Ask me any question about GDG MCET records and I'll find grounded evidence.",
+            "Hello! Ask me any question about your workspace's records and I'll find grounded evidence.",
             mention_author=False
         )
 

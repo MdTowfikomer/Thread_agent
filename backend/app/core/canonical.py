@@ -239,6 +239,7 @@ class Citation(BaseModel):
     snippet: str
     permission: PermissionLevel
     source_uri: Optional[str] = None
+    source_timestamp: Optional[datetime] = None
     relevance_score: float = 0.0
 
 # Access Context for ACL evaluation
@@ -268,6 +269,7 @@ class RetrievalReceipt(BaseModel):
     candidates_after_acl: int
     selected_item_ids: List[str]
     scores: Dict[str, float]
+    score_details: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     source_types: List[SourceType]
     retrieval_strategy: str = "deterministic_hybrid_cosine_lexical_pre_acl"
     query_embedding_model: Optional[str] = None

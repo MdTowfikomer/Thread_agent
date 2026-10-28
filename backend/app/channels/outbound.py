@@ -299,12 +299,13 @@ class ChannelMessageDeliveryService:
         if not query.strip():
             raise ValueError("Query cannot be empty.")
 
-        session_key = conversation_store.format_session_key(platform.value, destination_id, principal.user_id)
+        session_key = conversation_store.permission_session_key(platform.value, destination_id, principal.user_id, principal.access_context.allowed_scopes)
         chat_history = conversation_store.get_recent_turns(session_key=session_key, organization_id=principal.organization_id, limit=10)
 
         result = app_graph.invoke(GraphState(
             query=query,
             organization_id=principal.organization_id,
+            platform=platform.value,
             access_context=principal.access_context,
             session_key=session_key,
             chat_history=chat_history,

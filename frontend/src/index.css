@@ -36,3 +36,16 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #404040;
 }
+
+@layer components {
+  .v2-input { @apply mt-2 block min-h-11 w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100; }
+  .v2-label { @apply block text-sm text-neutral-300; }
+  .v2-primary { @apply min-h-11 rounded-md bg-neutral-100 px-4 py-2.5 text-sm font-medium text-neutral-950 transition-colors hover:bg-white disabled:cursor-wait disabled:opacity-50; }
+  .v2-secondary { @apply min-h-11 rounded-md border border-neutral-700 px-3 py-2 text-sm text-neutral-300 transition-colors hover:border-neutral-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-50; }
+  .v2-dialog { @apply fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-lg rounded-xl border border-neutral-700 bg-neutral-950 p-6 text-neutral-100 backdrop:bg-black/70; }
+  .v2-empty { @apply flex min-h-screen flex-col items-center justify-center gap-6 bg-neutral-950 px-5 py-10 text-neutral-200; }
+}
+
+:focus-visible { outline: 2px solid #d4d4d4; outline-offset: 3px; }
+html { color-scheme: dark; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }

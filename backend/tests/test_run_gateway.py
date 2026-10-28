@@ -8,6 +8,31 @@ from app.channels.run_gateway import main
 from app.channels.gateway import DiscordGatewayBot
 
 
+@pytest.mark.parametrize('fail_closed', [True, False])
+@pytest.mark.parametrize('quoted', [True, False])
+def test_advisory_lock_failure_does_not_expose_dsn(monkeypatch, caplog, fail_closed, quoted):
+    import traceback
+    import psycopg2
+    from app.channels.gateway import try_acquire_gateway_advisory_lock
+    password = 'synthetic-private-password'
+    dsn = "postgresql://test:" + password + "@example.invalid:5432/postgres"
+    if quoted:
+        dsn = "'" + dsn + "'"
+    monkeypatch.setenv('SUPABASE_DB_URL', dsn)
+    def fail(*args, **kwargs):
+        raise psycopg2.ProgrammingError('invalid dsn: ' + dsn)
+    monkeypatch.setattr(psycopg2, 'connect', fail)
+    formatted = ''
+    if fail_closed:
+        with pytest.raises(RuntimeError) as error:
+            try_acquire_gateway_advisory_lock(fail_on_db_error=True)
+        formatted = ''.join(traceback.format_exception(error.type, error.value, error.tb))
+    else:
+        assert try_acquire_gateway_advisory_lock() is None
+    assert password not in caplog.text + formatted
+    assert dsn not in caplog.text + formatted
+
+
 def test_run_gateway_fails_closed_on_db_error():
     """Verify run_gateway fails closed when advisory lock DB check throws an error."""
     async def run():

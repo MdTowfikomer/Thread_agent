@@ -17,7 +17,7 @@ ALLOWED_DEV_DEMO_USERS = {"demo_organizer", "demo_community"}
 
 def create_access_token(
     user_id: str,
-    organization_id: str = "gdg_mcet",
+    organization_id: str,
     expires_in_seconds: int = 86400,
     secret: Optional[str] = None
 ) -> str:
@@ -84,6 +84,19 @@ def get_current_principal(
             )
 
     # 1. Resolve Token from Bearer Header or Secure HttpOnly Cookie
+    # V2 cookies are opaque, revocable database sessions. Never downgrade an
+    # invalid V2 session into a demo/guest identity.
+    if request.cookies.get("thread_v2_session"):
+        from app.tenancy.auth import get_current_user
+        from app.tenancy.repository import tenant_repository
+        user = get_current_user(request)
+        org_id = user["active_organization_id"]
+        if not org_id:
+            raise HTTPException(409, "Create or select a workspace to continue.")
+        tenant_repository.membership(org_id, user["user_id"])
+        ctx = membership_store.derive_access_context(user["user_id"], org_id)
+        return AuthenticatedPrincipal(user_id=user["user_id"], organization_id=org_id, access_context=ctx)
+
     token = None
     if authorization:
         parts = authorization.split()
@@ -101,16 +114,19 @@ def get_current_principal(
     if token:
         payload = verify_access_token(token)
         user_id = payload.get("sub")
-        org_id = payload.get("org", "gdg_mcet")
+        org_id = payload.get("org")
 
-        if not user_id:
+        if not user_id or not org_id:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Malformed token payload: missing sub claim",
+                detail="Malformed token payload: missing identity or organization claim",
                 headers={"WWW-Authenticate": "Bearer"}
             )
 
         # Derive permissions strictly from MembershipStore using verified token subject
+        from app.tenancy.repository import tenant_repository
+        if tenant_repository.configured:
+            tenant_repository.membership(org_id, user_id)
         ctx = membership_store.derive_access_context(user_id=user_id, organization_id=org_id)
         return AuthenticatedPrincipal(
             user_id=user_id,

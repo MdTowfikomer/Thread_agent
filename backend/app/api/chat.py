@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 import json
+import logging
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
 from app.core.canonical import Citation
@@ -10,6 +11,8 @@ from app.graph.state import GraphState
 from app.graph.workflow import app_graph
 
 from app.channels.inbound_service import inbound_agent_query_service, ChannelType
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
@@ -98,11 +101,12 @@ async def chat_stream_endpoint(
             ):
                 yield f"data: {json.dumps(event, default=str)}\n\n"
         except HTTPException as exc:
-            logger.warning("HTTPException in chat_stream_endpoint: %s", exc.detail)
+            logger.warning("Chat stream failed with HTTP status %s", exc.status_code)
             err_data = json.dumps({"type": "error", "error": exc.detail, "status": exc.status_code}, default=str)
             yield f"data: {err_data}\n\n"
         except Exception as exc:
-            logger.exception("Unexpected error in chat_stream_endpoint: %s", exc)
+            # Provider/driver exceptions can include credentials or request text.
+            logger.error("Unexpected chat stream failure (%s)", type(exc).__name__)
             err_data = json.dumps({"type": "error", "error": "The query could not be completed. Retry later.", "status": 500}, default=str)
             yield f"data: {err_data}\n\n"
 

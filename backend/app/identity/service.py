@@ -1,3 +1,4 @@
+from app.data.postgres import connect as db_connect
 import logging
 import os
 import uuid
@@ -262,7 +263,7 @@ class CrossChannelIdentityService:
 
         try:
             import psycopg2
-            with psycopg2.connect(db_url) as conn:
+            with db_connect(db_url) as conn:
                 with conn.cursor() as cur:
                     # Single atomic transaction: lock existing row if present across all workers
                     cur.execute("""
@@ -375,7 +376,7 @@ class CrossChannelIdentityService:
             if db_url:
                 try:
                     import psycopg2
-                    with psycopg2.connect(db_url) as conn:
+                    with db_connect(db_url) as conn:
                         with conn.cursor() as cur:
                             cur.execute("""
                                 SELECT id, organization_id, person_id, channel_type, account_id,
@@ -533,7 +534,7 @@ class CrossChannelIdentityService:
         if db_url:
             try:
                 import psycopg2
-                with psycopg2.connect(db_url) as conn:
+                with db_connect(db_url) as conn:
                     with conn.cursor() as cur:
                         cur.execute("""
                             UPDATE channel_account_links
@@ -603,7 +604,7 @@ class CrossChannelIdentityService:
         if db_url:
             try:
                 import psycopg2
-                with psycopg2.connect(db_url) as conn:
+                with db_connect(db_url) as conn:
                     with conn.cursor() as cur:
                         cur.execute("""
                             INSERT INTO identity_audit_log (
@@ -635,7 +636,7 @@ class CrossChannelIdentityService:
         if db_url:
             try:
                 import psycopg2
-                with psycopg2.connect(db_url) as conn:
+                with db_connect(db_url) as conn:
                     with conn.cursor() as cur:
                         if person_id:
                             cur.execute("""
@@ -725,7 +726,7 @@ class CrossChannelIdentityService:
         if db_url:
             try:
                 import psycopg2
-                with psycopg2.connect(db_url) as conn:
+                with db_connect(db_url) as conn:
                     with conn.cursor() as cur:
                         cur.execute("""
                             INSERT INTO manual_link_requests (
@@ -764,7 +765,7 @@ class CrossChannelIdentityService:
         if db_url:
             try:
                 import psycopg2
-                with psycopg2.connect(db_url) as conn:
+                with db_connect(db_url) as conn:
                     with conn.cursor() as cur:
                         if status:
                             cur.execute("""
@@ -819,7 +820,7 @@ class CrossChannelIdentityService:
         if not req and db_url:
             try:
                 import psycopg2
-                with psycopg2.connect(db_url) as conn:
+                with db_connect(db_url) as conn:
                     with conn.cursor() as cur:
                         cur.execute("""
                             SELECT id, organization_id, person_id, channel_type, account_id,
@@ -887,7 +888,7 @@ class CrossChannelIdentityService:
         if db_url:
             try:
                 import psycopg2
-                with psycopg2.connect(db_url) as conn:
+                with db_connect(db_url) as conn:
                     with conn.cursor() as cur:
                         cur.execute("""
                             UPDATE manual_link_requests

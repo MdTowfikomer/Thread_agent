@@ -135,7 +135,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             };
             const existingIdx = stagesList.findIndex(s => s.step === event.step && (!('tool' in event) || s.tool === event.tool));
             if (existingIdx >= 0) {
-              stagesList[existingIdx] = stepInfo;
+              stagesList[existingIdx] = { ...stagesList[existingIdx], ...stepInfo,
+                toolArgs: stepInfo.toolArgs ?? stagesList[existingIdx].toolArgs,
+                count: stepInfo.count ?? stagesList[existingIdx].count };
             } else {
               stagesList.push(stepInfo);
             }
@@ -180,6 +182,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         setActiveMessageId(assistantId);
         return { content: [{ type: 'text', text: response.answer || accumulatedText }] };
       } catch (error: unknown) {
+        stagesList.forEach(step => { if (step.status === 'running') step.status = 'failed'; });
         if (error instanceof ApiError && error.status === 401) onUnauthorized?.();
         const pendingMessageId = pendingMessageIdRef.current;
         if (accumulatedText.trim().length > 0) {
@@ -203,6 +206,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           citations: [],
           sufficient_evidence: false,
+          stages: stagesList,
           traceId: error instanceof ApiError ? error.traceId : undefined,
         };
         setMessagesList((current) => pendingMessageId
@@ -299,9 +303,6 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
                       <div className={`mt-3 text-base leading-7 ${message.role === 'user' ? 'border-l border-neutral-700 pl-4 text-neutral-300' : message.isPending ? 'text-neutral-300' : 'text-neutral-100'}`}>
                         <MarkdownMessage content={message.content} />
-                        {message.isPending && !message.content && (
-                          <span className="inline-block animate-pulse text-neutral-500 text-sm">Thinking...</span>
-                        )}
                       </div>
 
                       {/* Completed Tool Calling Timeline */}

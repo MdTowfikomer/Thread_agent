@@ -1,3 +1,4 @@
+from app.data.postgres import connect as db_connect
 import os
 import logging
 from enum import Enum
@@ -57,7 +58,7 @@ class WebhookDeliveryStore:
         if db_url:
             try:
                 import psycopg2
-                with psycopg2.connect(db_url) as conn:
+                with db_connect(db_url) as conn:
                     with conn.cursor() as cur:
                         # Query existing delivery record
                         cur.execute(
@@ -161,7 +162,7 @@ class WebhookDeliveryStore:
         if db_url:
             try:
                 import psycopg2
-                with psycopg2.connect(db_url) as conn:
+                with db_connect(db_url) as conn:
                     with conn.cursor() as cur:
                         cur.execute("""
                             UPDATE processed_webhook_deliveries
@@ -186,7 +187,7 @@ class WebhookDeliveryStore:
         if db_url:
             try:
                 import psycopg2
-                with psycopg2.connect(db_url) as conn:
+                with db_connect(db_url) as conn:
                     with conn.cursor() as cur:
                         cur.execute("""
                             UPDATE processed_webhook_deliveries
@@ -210,7 +211,7 @@ class WebhookDeliveryStore:
         if db_url:
             try:
                 import psycopg2
-                with psycopg2.connect(db_url) as conn:
+                with db_connect(db_url) as conn:
                     with conn.cursor() as cur:
                         cur.execute("SELECT status FROM processed_webhook_deliveries WHERE delivery_id = %s;", (delivery_id,))
                         row = cur.fetchone()

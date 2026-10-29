@@ -1,3 +1,4 @@
+from app.data.postgres import connect as db_connect
 import os
 import json
 import uuid
@@ -35,7 +36,7 @@ class GuildInstallationStore:
 
         try:
             import psycopg2
-            with psycopg2.connect(db_url) as conn:
+            with db_connect(db_url) as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         "SELECT guild_id, organization_id, guild_name, is_active "
@@ -76,7 +77,7 @@ class GuildInstallationStore:
         if db_url:
             try:
                 import psycopg2
-                with psycopg2.connect(db_url) as conn:
+                with db_connect(db_url) as conn:
                     with conn.cursor() as cur:
                         cur.execute("""
                             INSERT INTO discord_guild_installations (guild_id, organization_id, guild_name, is_active)
@@ -104,7 +105,7 @@ class GuildInstallationStore:
         if db_url:
             try:
                 import psycopg2
-                with psycopg2.connect(db_url) as conn:
+                with db_connect(db_url) as conn:
                     with conn.cursor() as cur:
                         cur.execute(
                             "SELECT organization_id FROM discord_guild_installations WHERE guild_id = %s AND is_active = TRUE;",
@@ -126,7 +127,7 @@ class GuildInstallationStore:
         if db_url:
             try:
                 import psycopg2
-                with psycopg2.connect(db_url) as conn:
+                with db_connect(db_url) as conn:
                     with conn.cursor() as cur:
                         cur.execute(
                             "SELECT guild_id, organization_id, guild_name, is_active FROM discord_guild_installations WHERE guild_id = %s;",
@@ -175,7 +176,7 @@ class GitHubRepositoryBindingStore:
             return
         try:
             import psycopg2
-            with psycopg2.connect(db_url, connect_timeout=5) as conn:
+            with db_connect(db_url, connect_timeout=5) as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT id, organization_id, installation_id, repository_id, repository_name, is_active, bound_at, metadata FROM github_repository_bindings")
                     rows = cur.fetchall()
@@ -216,7 +217,7 @@ class GitHubRepositoryBindingStore:
         if db_url:
             try:
                 import psycopg2
-                with psycopg2.connect(db_url) as conn:
+                with db_connect(db_url) as conn:
                     with conn.cursor() as cur:
                         cur.execute("""
                             INSERT INTO github_repository_bindings 
@@ -256,7 +257,7 @@ class GitHubRepositoryBindingStore:
         if db_url:
             try:
                 import psycopg2
-                with psycopg2.connect(db_url) as conn:
+                with db_connect(db_url) as conn:
                     with conn.cursor() as cur:
                         if repository_id:
                             cur.execute(
@@ -317,7 +318,7 @@ class TelegramChatBindingStore:
             return
         try:
             import psycopg2
-            with psycopg2.connect(db_url) as conn:
+            with db_connect(db_url) as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT id, organization_id, chat_id, chat_title, chat_type, is_active, bound_at, metadata FROM telegram_chat_bindings;")
                     for row in cur.fetchall():
@@ -350,7 +351,7 @@ class TelegramChatBindingStore:
         db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
         if db_url:
             import psycopg2
-            with psycopg2.connect(db_url) as conn:
+            with db_connect(db_url) as conn:
                 with conn.cursor() as cur:
                     cur.execute("""
                             INSERT INTO telegram_chat_bindings 
@@ -386,7 +387,7 @@ class TelegramChatBindingStore:
         db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
         if db_url:
             import psycopg2
-            with psycopg2.connect(db_url) as conn:
+            with db_connect(db_url) as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT organization_id FROM telegram_chat_bindings WHERE chat_id = %s AND is_active = TRUE;", (cid,))
                     row = cur.fetchone()
@@ -402,7 +403,7 @@ class TelegramChatBindingStore:
         db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
         if db_url:
             import psycopg2
-            with psycopg2.connect(db_url) as conn:
+            with db_connect(db_url) as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT id, organization_id, chat_id, chat_title, chat_type, is_active, bound_at, metadata FROM telegram_chat_bindings WHERE chat_id = %s;", (cid,))
                     row = cur.fetchone()
@@ -446,7 +447,7 @@ class SlackWorkspaceBindingStore:
             return
         try:
             import psycopg2
-            with psycopg2.connect(db_url) as conn:
+            with db_connect(db_url) as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT id, organization_id, team_id, team_domain, is_active, bound_at, metadata FROM slack_workspace_bindings;")
                     for row in cur.fetchall():
@@ -477,7 +478,7 @@ class SlackWorkspaceBindingStore:
         db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
         if db_url:
             import psycopg2
-            with psycopg2.connect(db_url) as conn:
+            with db_connect(db_url) as conn:
                 with conn.cursor() as cur:
                     cur.execute("""
                             INSERT INTO slack_workspace_bindings 
@@ -511,7 +512,7 @@ class SlackWorkspaceBindingStore:
         db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
         if db_url:
             import psycopg2
-            with psycopg2.connect(db_url) as conn:
+            with db_connect(db_url) as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT organization_id FROM slack_workspace_bindings WHERE team_id = %s AND is_active = TRUE;", (tid,))
                     row = cur.fetchone()
@@ -527,7 +528,7 @@ class SlackWorkspaceBindingStore:
         db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
         if db_url:
             import psycopg2
-            with psycopg2.connect(db_url) as conn:
+            with db_connect(db_url) as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT id, organization_id, team_id, team_domain, is_active, bound_at, metadata FROM slack_workspace_bindings WHERE team_id = %s;", (tid,))
                     row = cur.fetchone()
@@ -541,7 +542,7 @@ class SlackWorkspaceBindingStore:
         db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
         if db_url:
             import psycopg2
-            with psycopg2.connect(db_url) as conn:
+            with db_connect(db_url) as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT id, organization_id, team_id, team_domain, is_active, bound_at, metadata FROM slack_workspace_bindings WHERE is_active=TRUE AND metadata->'channel_ids' ? %s LIMIT 1", (cid,))
                     row = cur.fetchone()
@@ -611,7 +612,7 @@ if __name__ == "__main__":
             print("\n--- Database Bindings (PostgreSQL) ---")
             try:
                 import psycopg2
-                with psycopg2.connect(db_url) as conn:
+                with db_connect(db_url) as conn:
                     with conn.cursor() as cur:
                         cur.execute("SELECT repository_id, repository_name, organization_id, is_active FROM github_repository_bindings ORDER BY bound_at;")
                         rows = cur.fetchall()
@@ -627,7 +628,7 @@ if __name__ == "__main__":
         if db_url:
             try:
                 import psycopg2
-                with psycopg2.connect(db_url) as conn:
+                with db_connect(db_url) as conn:
                     with conn.cursor() as cur:
                         cur.execute("DELETE FROM github_repository_bindings WHERE repository_id = %s;", (rid,))
                     conn.commit()

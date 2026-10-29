@@ -43,7 +43,8 @@ class ConversationTurnStore:
             return None
         try:
             import psycopg2
-            return psycopg2.connect(db_url)
+            from app.data.postgres import connect
+            return connect(db_url)
         except Exception:
             logger.error("Conversation history connection unavailable; connection details withheld.")
             return None

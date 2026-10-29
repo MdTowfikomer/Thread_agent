@@ -1,3 +1,4 @@
+from app.data.postgres import connect as db_connect
 import hashlib
 import json
 import os
@@ -141,7 +142,7 @@ class OutboundAuditStore:
         db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
         if db_url:
             import psycopg2
-            with psycopg2.connect(db_url) as conn:
+            with db_connect(db_url) as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         "SELECT id, delivery_status, provider_response_id, delivered_at FROM outbound_message_deliveries WHERE idempotency_key=%s FOR UPDATE",
@@ -217,7 +218,7 @@ class OutboundAuditStore:
         db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
         if db_url:
             import psycopg2
-            with psycopg2.connect(db_url) as conn:
+            with db_connect(db_url) as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         "UPDATE outbound_message_deliveries SET delivery_status=%s, provider_response_id=%s, delivered_at=%s WHERE idempotency_key=%s",

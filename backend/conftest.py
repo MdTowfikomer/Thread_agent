@@ -9,6 +9,10 @@ if str(backend_dir) not in sys.path:
 
 # Decouple offline pytest suite from live network state so pytest -q runs hermetically and in seconds
 if os.getenv("THREAD_RUN_LIVE_SUPABASE_TESTS") != "1":
+    # Most legacy driver mocks are scoped to one test; pool behavior has its own
+    # explicit tests and must not retain those mocks between unrelated cases.
+    os.environ["THREAD_DB_POOL_ENABLED"] = "false"
+    os.environ["THREAD_PROGRESS_ENABLED"] = "false"
     os.environ["SUPABASE_URL"] = ""
     os.environ["SUPABASE_SERVICE_ROLE_KEY"] = ""
     os.environ["SUPABASE_SECRET_KEY"] = ""

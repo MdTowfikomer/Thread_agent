@@ -1,3 +1,4 @@
+from app.data.postgres import connect as db_connect
 import os
 import secrets
 import hashlib
@@ -38,7 +39,7 @@ class AccountLinkTool:
             return None
         try:
             import psycopg2
-            return psycopg2.connect(db_url)
+            return db_connect(db_url)
         except Exception as e:
             logger.error(f"AccountLink database connection failed: {e}")
             return None

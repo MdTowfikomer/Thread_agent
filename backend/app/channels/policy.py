@@ -1,3 +1,4 @@
+from app.data.postgres import connect as db_connect
 import os
 import json
 from typing import Dict, Optional, Any
@@ -37,7 +38,7 @@ class ChannelPolicyStore:
 
         try:
             import psycopg2
-            with psycopg2.connect(db_url) as conn:
+            with db_connect(db_url) as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         "SELECT organization_id, channel_type, guild_id, channel_id, channel_name, "
@@ -93,7 +94,7 @@ class ChannelPolicyStore:
         if db_url:
             try:
                 import psycopg2
-                with psycopg2.connect(db_url) as conn:
+                with db_connect(db_url) as conn:
                     with conn.cursor() as cur:
                         cur.execute("""
                             INSERT INTO channel_policies 
@@ -147,7 +148,7 @@ class ChannelPolicyStore:
             if db_url:
                 try:
                     import psycopg2
-                    with psycopg2.connect(db_url) as conn:
+                    with db_connect(db_url) as conn:
                         with conn.cursor() as cur:
                             cur.execute(
                                 "SELECT organization_id, channel_type, guild_id, channel_id, channel_name, "

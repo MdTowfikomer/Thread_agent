@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 import json
 import logging
+import asyncio
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
 from app.core.canonical import Citation
@@ -51,7 +52,8 @@ async def chat_endpoint(
         )
 
     try:
-        res = inbound_agent_query_service.process_query(
+        res = await asyncio.to_thread(
+            inbound_agent_query_service.process_query,
             query=req.query,
             organization_id=principal.organization_id,
             principal=principal,

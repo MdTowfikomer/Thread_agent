@@ -38,7 +38,8 @@ class TenantRepository:
                 url = os.getenv("THREAD_SERVICE_DB_URL") or os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
                 if not url:
                     raise HTTPException(503, "Workspace service database is not configured.")
-                conn = psycopg2.connect(url, connect_timeout=5, options="-c statement_timeout=10000 -c lock_timeout=5000")
+                from app.data.postgres import connect
+                conn = connect(url)
             if self.dialect == "sqlite":
                 conn.execute("BEGIN IMMEDIATE")
             yield conn.cursor()

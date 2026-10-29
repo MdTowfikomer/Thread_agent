@@ -5,6 +5,7 @@ import logging
 import secrets
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, Set
+import asyncio
 from fastapi import APIRouter, Request, HTTPException, BackgroundTasks, status
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.exceptions import InvalidSignature
@@ -680,7 +681,8 @@ async def handle_telegram_webhook(request: Request):
                         channel_name=chat.get("title") or chat.get("username") or "Telegram Chat",
                     )
 
-                send_result = inbound_agent_query_service.process_and_deliver(
+                send_result = await asyncio.to_thread(
+                    inbound_agent_query_service.process_and_deliver,
                     principal=principal,
                     platform=ChannelType.TELEGRAM,
                     destination_id=chat_id,
@@ -758,7 +760,7 @@ async def handle_telegram_webhook(request: Request):
         )
 
 
-async def _process_slack_app_mention_background(
+def _process_slack_app_mention_background(
     principal: AuthenticatedPrincipal,
     channel_id: str,
     query: str,

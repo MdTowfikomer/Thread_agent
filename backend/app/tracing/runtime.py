@@ -15,6 +15,8 @@ def observe_stage(name):
         @wraps(fn)
         def wrapped(state):
             started = perf_counter()
+            from app.channels.progress import notify_stage
+            notify_stage(name,state)
             try:
                 result = fn(state)
             except Exception as exc:

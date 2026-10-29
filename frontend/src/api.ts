@@ -139,7 +139,7 @@ export async function sendChatMessage(query: string): Promise<ChatResponse> {
 
 export type SSEEvent =
   | { type: 'stage'; step: string; label: string; status: 'running' | 'completed' | 'failed'; message?: string; intent?: string; role?: string; count?: number; sufficient?: boolean }
-  | { type: 'tool_call'; step: string; tool: string; label: string; status: 'running' | 'completed' | 'failed'; message?: string; args?: string }
+  | { type: 'tool_call'; step: string; tool: string; label: string; status: 'running' | 'completed' | 'failed'; message?: string; args?: string; count?: number }
   | { type: 'token'; text: string }
   | { type: 'complete'; response: ChatResponse }
   | { type: 'error'; error: string; status?: number };

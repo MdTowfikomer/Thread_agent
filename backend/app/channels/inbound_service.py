@@ -304,16 +304,7 @@ class InboundAgentQueryService:
         eval_res = role_agent_node(state)
         state = state.model_copy(update=eval_res)
 
-        if intent_cat == "TOOL_EXECUTION":
-            yield {
-                "type": "tool_call",
-                "step": "tool_execution",
-                "tool": state.tool_name,
-                "label": f"Tool: {state.tool_name}",
-                "status": "completed",
-                "message": f"Tool '{state.tool_name}' executed successfully."
-            }
-        elif intent_cat == "ORGANIZATIONAL_FACTS":
+        if intent_cat == "ORGANIZATIONAL_FACTS":
             pack = state.evidence_pack
             citations_count = len(pack.citations) if pack else 0
             sufficient = pack.sufficient_evidence if pack else False
@@ -326,7 +317,7 @@ class InboundAgentQueryService:
                 "count": citations_count,
                 "sufficient": sufficient
             }
-        else:
+        elif intent_cat != "TOOL_EXECUTION":
             yield {
                 "type": "stage",
                 "step": "retrieval_service",
@@ -344,7 +335,13 @@ class InboundAgentQueryService:
             "message": "Generating final response..."
         }
 
+        synthesis_started = perf_counter()
         prompt, immediate_answer, tool_evidence = prepare_synthesis(state)
+        if intent_cat == "TOOL_EXECUTION":
+            yield {"type": "tool_call", "step": "tool_execution", "tool": state.tool_name,
+                   "label": f"Tool: {state.tool_name}", "status": "completed",
+                   "message": "Tool execution finished.",
+                   "count": len(tool_evidence.citations) if tool_evidence else 0}
         accumulated_chunks = []
 
         if immediate_answer is not None:
@@ -353,13 +350,32 @@ class InboundAgentQueryService:
             accumulated_chunks.append(validated_answer)
             yield {"type": "token", "text": validated_answer}
         else:
-            for token_chunk in stream_for_state(state, prompt):
+            from app.tenancy.models import capture_usage
+            iterator = iter(stream_for_state(state, prompt))
+            while True:
+                # Complete each ContextVar scope before yielding SSE bytes; the
+                # next generator step can run in a different threadpool context.
+                finished = False
+                with capture_usage() as usage:
+                    try:
+                        token_chunk = next(iterator)
+                    except StopIteration:
+                        finished = True
+                state.trace.extend(usage)
+                if finished:
+                    break
                 accumulated_chunks.append(token_chunk)
                 yield {"type": "token", "text": token_chunk}
             raw_text = "".join(accumulated_chunks)
             clean_text = redact_text(coerce_model_text(raw_text))
             validated_answer = validate_output(clean_text, query, user_turn_texts, intent_cat)
 
+        state.trace.append({"step": "synthesis", "status": "completed", "agent_name": "ThreadAgent",
+                            "message": "Prepared the response from the executed query path.",
+                            "latency_ms": round((perf_counter()-synthesis_started)*1000,2),
+                            "timestamp": datetime.now(timezone.utc).isoformat()})
+        yield {"type": "stage", "step": "synthesis", "label": "Answer synthesis", "status": "completed", "message": "Answer prepared."}
+        yield {"type": "stage", "step": "finalizing", "label": "Finalizing response", "status": "running", "message": "Saving conversation and execution details…"}
         # 4. FINALIZE TURNS AND TRACE
         conversation_store.record_turn(session_key, platform.value, organization_id, principal.user_id, "user", query)
         conversation_store.record_turn(session_key, platform.value, organization_id, principal.user_id, "assistant", validated_answer)
@@ -382,6 +398,7 @@ class InboundAgentQueryService:
             except Exception:
                 pass
 
+        yield {"type": "stage", "step": "finalizing", "label": "Finalizing response", "status": "completed", "message": "Response ready."}
         yield {
             "type": "complete",
             "response": {
@@ -430,15 +447,17 @@ class InboundAgentQueryService:
 
         # 1. Call process_query() once
         from app.tenancy.models import TenantModelNotConfiguredError, TenantModelUnavailableError
+        from app.channels.progress import NativeProgress
         try:
-            query_res = self.process_query(
-                query=query,
-                organization_id=principal.organization_id,
-                principal=principal,
-                platform=platform,
-                destination_id=destination_id,
-                exclude_message_ids=all_exclude if all_exclude else None
-            )
+            with NativeProgress(principal,platform,destination_id,query,idempotency_key):
+                query_res = self.process_query(
+                    query=query,
+                    organization_id=principal.organization_id,
+                    principal=principal,
+                    platform=platform,
+                    destination_id=destination_id,
+                    exclude_message_ids=all_exclude if all_exclude else None
+                )
         except (TenantModelNotConfiguredError, TenantModelUnavailableError) as exc:
             # Platform replies still pass through the destination's authorization
             # and idempotent delivery checks. No source evidence accompanies errors.

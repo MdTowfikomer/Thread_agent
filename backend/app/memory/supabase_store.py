@@ -1,3 +1,4 @@
+from app.data.postgres import connect as db_connect
 import os
 import logging
 from typing import List, Dict, Any, Optional, Tuple
@@ -135,7 +136,7 @@ class SupabaseMemoryStore:
         if db_url:
             import psycopg2, json
             try:
-                with psycopg2.connect(db_url) as conn:
+                with db_connect(db_url) as conn:
                     with conn.cursor() as cur:
                         cur.execute(
                             "SELECT persist_record_and_chunks(%s::jsonb, %s::jsonb);",
@@ -309,7 +310,7 @@ class SupabaseMemoryStore:
         if db_url:
             try:
                 import psycopg2
-                with psycopg2.connect(db_url) as conn:
+                with db_connect(db_url) as conn:
                     with conn.cursor() as cur:
                         cur.execute("SELECT count(*) FROM memory_chunks WHERE organization_id = %s;", (organization_id,))
                         total_before = cur.fetchone()[0] or 0
@@ -359,7 +360,7 @@ class SupabaseMemoryStore:
         if db_url:
             try:
                 import psycopg2
-                with psycopg2.connect(db_url) as conn:
+                with db_connect(db_url) as conn:
                     with conn.cursor() as cur:
                         cur.execute("""
                             SELECT 
@@ -457,7 +458,7 @@ class SupabaseMemoryStore:
         if db_url:
             try:
                 import psycopg2
-                with psycopg2.connect(db_url) as conn:
+                with db_connect(db_url) as conn:
                     with conn.cursor() as cur:
                         embedding_str = f"[{','.join(str(x) for x in query_embedding)}]"
                         cur.execute("""

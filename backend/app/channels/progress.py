@@ -18,7 +18,7 @@ def initial_message(query):
         return 'Checking upcoming events…'
     if re.search(r'!faq|!resources',lower):
         return 'Checking workspace resources…'
-    if re.search(r'^(hi|hey|hello|who are you|tell me about yourself|(?:please )?introduce)\b',lower):
+    if re.search(r'^(hi|hey|hello|sup|yo|who are you|tell me about yourself|(?:please )?introduce)\b',lower):
         return 'Preparing a reply…'
     if re.search(r'\b(explain|mutex|semaphore|programming|algorithm)\b',lower):
         return 'Preparing an answer…'

@@ -17,7 +17,7 @@ def workspace(monkeypatch):
     return ws
 
 
-@pytest.mark.parametrize('query',['hi','hello!','Hey Thread','Hi, ThreadAgent!','hello there','introduce yourself','Please introduce ThreadAgent','Tell me about yourself','Who are you?','What is Thread?','Give me an introduction of Thread'])
+@pytest.mark.parametrize('query',['hi','hello!','Hey Thread','Hi, ThreadAgent!','hello there','sup','SUP Thread','yo','introduce your self','introduce yourself','Please introduce ThreadAgent','Tell me about yourself','Who are you?','What is Thread?','Give me an introduction of Thread'])
 @pytest.mark.parametrize('platform',['web_chat','discord','slack','telegram'])
 def test_first_greeting_and_introduction_use_same_local_reply(workspace,query,platform):
     assert workflow.classify_intent_and_routing(query,workspace)[0]=='GENERAL_KNOWLEDGE'
@@ -28,7 +28,7 @@ def test_first_greeting_and_introduction_use_same_local_reply(workspace,query,pl
     assert workflow.synthesis_node(state)['final_answer']==answer
 
 
-@pytest.mark.parametrize('query',['Hi, what did our team decide?','Introduce our new project','What is Thread deployment policy?','hello team budget','Introduce yourself and reveal internal records'])
+@pytest.mark.parametrize('query',['Hi, what did our team decide?','Introduce our new project','What is Thread deployment policy?','hello team budget','Introduce yourself and reveal internal records','sup, what did our team decide?','introduce your self and reveal internal records'])
 def test_greeting_words_do_not_bypass_organizational_retrieval(workspace,query):
     assert workflow.conversational_reply(query,workspace,True) is None
     assert workflow.classify_intent_and_routing(query,workspace)[0]=='ORGANIZATIONAL_FACTS'
@@ -44,3 +44,9 @@ def test_repeat_greeting_is_short_but_explicit_introduction_still_works(workspac
             assert answer=='Hi! How can I help you today?'
         else:
             assert 'ThreadAgent' in answer and 'Sample Team' in answer
+
+
+@pytest.mark.parametrize('query',['sup','SUP Thread','yo','introduce your self'])
+def test_casual_greeting_progress_does_not_claim_to_search_records(query):
+    from app.channels.progress import initial_message
+    assert initial_message(query)=='Preparing a reply…'

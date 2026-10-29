@@ -109,10 +109,10 @@ def conversational_reply(query: str, ws, first_turn: bool) -> Optional[str]:
     import re
     text = re.sub(r"\s+", " ", query.strip().lower()).rstrip("?!.,")
     greeting = re.fullmatch(
-        r"(?:hi|hello|hey|good morning|good evening|good afternoon|greetings)"
+        r"(?:hi|hello|hey|sup|yo|good morning|good evening|good afternoon|greetings)"
         r"(?:[, ]+(?:there|again|thread|threadagent|thread agent))?", text)
     introduction = re.fullmatch(
-        r"(?:please )?(?:introduce (?:yourself|thread|threadagent|thread agent)"
+        r"(?:please )?(?:introduce (?:your\s*self|thread|threadagent|thread agent)"
         r"|tell me about yourself|who are you|what is your name"
         r"|what(?: is|'s) (?:thread|threadagent|thread agent)"
         r"|give me (?:an? |the )?introduction (?:to|of) (?:thread|threadagent|thread agent))",

@@ -129,7 +129,7 @@ def conversational_reply(query: str, ws, first_turn: bool) -> Optional[str]:
 
 
 def classify_intent_and_routing(query: str, ws) -> Tuple[str, Optional[str], Optional[str], Any]:
-    """Default to evidence retrieval; bypass only explicit conversational/educational intent.
+    """Route clear general-knowledge questions directly; ground org questions in evidence.
 
     Tenant names and community-specific vocabulary never decide whether evidence
     is required. Specialist configuration influences the responder, not access.
@@ -172,6 +172,11 @@ def classify_intent_and_routing(query: str, ws) -> Tuple[str, Optional[str], Opt
         "define ", "explain ", "can you explain ", "how does ", "how do ", "how to ",
         "difference between ", "what is the difference between ", "what is a ", "what is an ",
         "compare ", "write a "
+    ))
+    # Common general-fact question forms don't always begin with an explicit
+    # educational verb or article (e.g. "What is the capital of India?").
+    educational = educational or bool(re.search(
+        r"\b(?:capital|currency|population|official language|continent|time zone) of\b", lower
     ))
     # Definitions within an explicitly named discipline/acronym are educational;
     # unfamiliar proper names otherwise remain on the evidence retrieval path.

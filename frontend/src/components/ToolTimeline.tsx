@@ -48,7 +48,7 @@ export function ToolTimeline({ stages, isPending = false, defaultExpanded }: Too
           const key = `${step.step}-${step.tool ?? ''}-${index}`;
           const open = openRows.has(key);
           const Icon = step.status === 'failed' ? CircleAlert : step.status === 'running' ? LoaderCircle : step.tool ? Wrench : step.step === 'retrieval_service' ? Search : Sparkles;
-          const summary = step.count !== undefined ? `${step.count} record${step.count === 1 ? '' : 's'} checked` : step.toolArgs || (step.status === 'running' ? 'In progress' : step.message || 'Finished');
+          const summary = step.count !== undefined ? `${step.count} supporting source${step.count === 1 ? '' : 's'}` : step.toolArgs || (step.status === 'running' ? 'In progress' : step.message || 'Finished');
           return <li key={key}>
             <button type="button" aria-expanded={open} aria-controls={`${id}-row-${index}`} aria-label={`${step.tool || step.label}, ${step.status}`}
               onClick={() => setOpenRows(current => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; })}

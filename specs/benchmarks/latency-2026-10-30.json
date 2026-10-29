@@ -1,0 +1,616 @@
+{
+  "date": "2026-10-30",
+  "baseline_commit": "718f51c89ee135f8e4a50e1bf37e58e8a75c6a7f",
+  "runtime_commit": "eae26aeab9a5bc9eb228acf1d50aa1ffbac92690",
+  "samples_per_case_per_version": 2,
+  "medians": {
+    "general": {
+      "first_event_ms": {
+        "before_ms": 6073.1,
+        "after_ms": 2461.0,
+        "reduction_percent": 59.5
+      },
+      "first_token_ms": {
+        "before_ms": 13477.4,
+        "after_ms": 9417.6,
+        "reduction_percent": 30.1
+      },
+      "complete_ms": {
+        "before_ms": 18165.1,
+        "after_ms": 11034.2,
+        "reduction_percent": 39.3
+      },
+      "post_token_ms": {
+        "before_ms": 4619.0,
+        "after_ms": 1580.2,
+        "reduction_percent": 65.8
+      }
+    },
+    "grounded": {
+      "first_event_ms": {
+        "before_ms": 6041.0,
+        "after_ms": 2384.4,
+        "reduction_percent": 60.5
+      },
+      "first_token_ms": {
+        "before_ms": 16407.6,
+        "after_ms": 8892.7,
+        "reduction_percent": 45.8
+      },
+      "complete_ms": {
+        "before_ms": 21255.6,
+        "after_ms": 10769.5,
+        "reduction_percent": 49.3
+      },
+      "post_token_ms": {
+        "before_ms": 4801.1,
+        "after_ms": 1778.2,
+        "reduction_percent": 63.0
+      }
+    }
+  },
+  "before": {
+    "samples": [
+      {
+        "case": "general",
+        "sample": 1,
+        "stage_events": [
+          {
+            "step": "triage_router",
+            "status": "running",
+            "elapsed_ms": 6078.8
+          },
+          {
+            "step": "triage_router",
+            "status": "completed",
+            "elapsed_ms": 7839.5
+          },
+          {
+            "step": "retrieval_service",
+            "status": "completed",
+            "elapsed_ms": 8753.9
+          },
+          {
+            "step": "synthesis",
+            "status": "running",
+            "elapsed_ms": 8754.8
+          }
+        ],
+        "headers_ms": 3998.0,
+        "first_event_ms": 6078.8,
+        "first_token_ms": 13367.7,
+        "complete_ms": 18090.7,
+        "last_token_ms": 13498.4,
+        "post_token_ms": 4592.3,
+        "citation_count": 0,
+        "sufficient_evidence": true,
+        "stages": [
+          {
+            "step": "triage_router",
+            "latency_ms": 1818.96
+          },
+          {
+            "step": "retrieval_service",
+            "latency_ms": 0.05
+          },
+          {
+            "step": "role_agent_verification",
+            "latency_ms": 914.01
+          }
+        ]
+      },
+      {
+        "case": "general",
+        "sample": 2,
+        "stage_events": [
+          {
+            "step": "triage_router",
+            "status": "running",
+            "elapsed_ms": 6067.3
+          },
+          {
+            "step": "triage_router",
+            "status": "completed",
+            "elapsed_ms": 7851.9
+          },
+          {
+            "step": "retrieval_service",
+            "status": "completed",
+            "elapsed_ms": 8787.4
+          },
+          {
+            "step": "synthesis",
+            "status": "running",
+            "elapsed_ms": 8788.2
+          }
+        ],
+        "headers_ms": 4146.9,
+        "first_event_ms": 6067.3,
+        "first_token_ms": 13587.1,
+        "complete_ms": 18239.4,
+        "last_token_ms": 13593.7,
+        "post_token_ms": 4645.7,
+        "citation_count": 0,
+        "sufficient_evidence": true,
+        "stages": [
+          {
+            "step": "triage_router",
+            "latency_ms": 1804.83
+          },
+          {
+            "step": "retrieval_service",
+            "latency_ms": 0.07
+          },
+          {
+            "step": "role_agent_verification",
+            "latency_ms": 901.86
+          }
+        ]
+      },
+      {
+        "case": "grounded",
+        "sample": 1,
+        "stage_events": [
+          {
+            "step": "triage_router",
+            "status": "running",
+            "elapsed_ms": 6066.2
+          },
+          {
+            "step": "triage_router",
+            "status": "completed",
+            "elapsed_ms": 7826.3
+          },
+          {
+            "step": "retrieval_service",
+            "status": "running",
+            "elapsed_ms": 7827.3
+          },
+          {
+            "step": "retrieval_service",
+            "status": "completed",
+            "elapsed_ms": 11825.9
+          },
+          {
+            "step": "synthesis",
+            "status": "running",
+            "elapsed_ms": 11826.4
+          }
+        ],
+        "headers_ms": 3985.9,
+        "first_event_ms": 6066.2,
+        "first_token_ms": 16716.4,
+        "complete_ms": 21657.5,
+        "last_token_ms": 16771.9,
+        "post_token_ms": 4885.6,
+        "citation_count": 4,
+        "sufficient_evidence": true,
+        "stages": [
+          {
+            "step": "triage_router",
+            "latency_ms": 1803.16
+          },
+          {
+            "step": "retrieval_service",
+            "latency_ms": 3079.85
+          },
+          {
+            "step": "model_usage",
+            "operation": "embedding",
+            "model_name": "models/gemini-embedding-001",
+            "latency_ms": 403.09,
+            "input_tokens": 14,
+            "output_tokens": 0
+          },
+          {
+            "step": "role_agent_verification",
+            "latency_ms": 898.09
+          }
+        ],
+        "correct_known_fact": true
+      },
+      {
+        "case": "grounded",
+        "sample": 2,
+        "stage_events": [
+          {
+            "step": "triage_router",
+            "status": "running",
+            "elapsed_ms": 6015.9
+          },
+          {
+            "step": "triage_router",
+            "status": "completed",
+            "elapsed_ms": 7855.6
+          },
+          {
+            "step": "retrieval_service",
+            "status": "running",
+            "elapsed_ms": 7856.4
+          },
+          {
+            "step": "retrieval_service",
+            "status": "completed",
+            "elapsed_ms": 11446.2
+          },
+          {
+            "step": "synthesis",
+            "status": "running",
+            "elapsed_ms": 11446.7
+          }
+        ],
+        "headers_ms": 3998.6,
+        "first_event_ms": 6015.9,
+        "first_token_ms": 16098.8,
+        "complete_ms": 20853.7,
+        "last_token_ms": 16137.1,
+        "post_token_ms": 4716.6,
+        "citation_count": 4,
+        "sufficient_evidence": true,
+        "stages": [
+          {
+            "step": "triage_router",
+            "latency_ms": 1841.13
+          },
+          {
+            "step": "retrieval_service",
+            "latency_ms": 2584.41
+          },
+          {
+            "step": "model_usage",
+            "operation": "embedding",
+            "model_name": "models/gemini-embedding-001",
+            "latency_ms": 408.75,
+            "input_tokens": 14,
+            "output_tokens": 0
+          },
+          {
+            "step": "role_agent_verification",
+            "latency_ms": 916.15
+          }
+        ],
+        "correct_known_fact": true
+      }
+    ],
+    "service_cold_start_measured": false,
+    "benchmark_scope": "member in existing demo workspace",
+    "health_ms": 957.7,
+    "cleanup_succeeded": true
+  },
+  "after": {
+    "samples": [
+      {
+        "case": "general",
+        "sample": 1,
+        "stage_events": [
+          {
+            "step": "triage_router",
+            "status": "running",
+            "elapsed_ms": 2432.6
+          },
+          {
+            "step": "triage_router",
+            "status": "completed",
+            "elapsed_ms": 3040.5
+          },
+          {
+            "step": "retrieval_service",
+            "status": "completed",
+            "elapsed_ms": 3336.2
+          },
+          {
+            "step": "synthesis",
+            "status": "running",
+            "elapsed_ms": 3336.4
+          },
+          {
+            "step": "synthesis",
+            "status": "completed",
+            "elapsed_ms": 13056.1
+          },
+          {
+            "step": "finalizing",
+            "status": "running",
+            "elapsed_ms": 13056.8
+          },
+          {
+            "step": "finalizing",
+            "status": "completed",
+            "elapsed_ms": 14588.6
+          }
+        ],
+        "headers_ms": 1582.9,
+        "first_event_ms": 2432.6,
+        "first_token_ms": 13044.4,
+        "complete_ms": 14628.5,
+        "last_token_ms": 13047.5,
+        "post_token_ms": 1581.0,
+        "citation_count": 0,
+        "sufficient_evidence": true,
+        "stages": [
+          {
+            "step": "triage_router",
+            "latency_ms": 604.24
+          },
+          {
+            "step": "retrieval_service",
+            "latency_ms": 0.04
+          },
+          {
+            "step": "role_agent_verification",
+            "latency_ms": 299.43
+          },
+          {
+            "step": "model_usage",
+            "operation": "chat",
+            "model_name": "gemini-3.5-flash-lite",
+            "latency_ms": 1005.18,
+            "input_tokens": 336,
+            "output_tokens": 41
+          },
+          {
+            "step": "synthesis",
+            "latency_ms": 9719.89
+          }
+        ]
+      },
+      {
+        "case": "general",
+        "sample": 2,
+        "stage_events": [
+          {
+            "step": "triage_router",
+            "status": "running",
+            "elapsed_ms": 2489.4
+          },
+          {
+            "step": "triage_router",
+            "status": "completed",
+            "elapsed_ms": 2981.4
+          },
+          {
+            "step": "retrieval_service",
+            "status": "completed",
+            "elapsed_ms": 3288.8
+          },
+          {
+            "step": "synthesis",
+            "status": "running",
+            "elapsed_ms": 3289.5
+          },
+          {
+            "step": "synthesis",
+            "status": "completed",
+            "elapsed_ms": 5885.3
+          },
+          {
+            "step": "finalizing",
+            "status": "running",
+            "elapsed_ms": 5885.7
+          },
+          {
+            "step": "finalizing",
+            "status": "completed",
+            "elapsed_ms": 7412.9
+          }
+        ],
+        "headers_ms": 1572.3,
+        "first_event_ms": 2489.4,
+        "first_token_ms": 5790.9,
+        "complete_ms": 7439.9,
+        "last_token_ms": 5860.6,
+        "post_token_ms": 1579.3,
+        "citation_count": 0,
+        "sufficient_evidence": true,
+        "stages": [
+          {
+            "step": "triage_router",
+            "latency_ms": 600.61
+          },
+          {
+            "step": "retrieval_service",
+            "latency_ms": 0.07
+          },
+          {
+            "step": "role_agent_verification",
+            "latency_ms": 301.55
+          },
+          {
+            "step": "model_usage",
+            "operation": "chat",
+            "model_name": "gemini-3.5-flash-lite",
+            "latency_ms": 773.64,
+            "input_tokens": 383,
+            "output_tokens": 32
+          },
+          {
+            "step": "synthesis",
+            "latency_ms": 2599.5
+          }
+        ]
+      },
+      {
+        "case": "grounded",
+        "sample": 1,
+        "stage_events": [
+          {
+            "step": "triage_router",
+            "status": "running",
+            "elapsed_ms": 2385.7
+          },
+          {
+            "step": "triage_router",
+            "status": "completed",
+            "elapsed_ms": 3001.9
+          },
+          {
+            "step": "retrieval_service",
+            "status": "running",
+            "elapsed_ms": 3002.7
+          },
+          {
+            "step": "retrieval_service",
+            "status": "completed",
+            "elapsed_ms": 7367.6
+          },
+          {
+            "step": "synthesis",
+            "status": "running",
+            "elapsed_ms": 7368.1
+          },
+          {
+            "step": "synthesis",
+            "status": "completed",
+            "elapsed_ms": 9855.9
+          },
+          {
+            "step": "finalizing",
+            "status": "running",
+            "elapsed_ms": 9856.7
+          },
+          {
+            "step": "finalizing",
+            "status": "completed",
+            "elapsed_ms": 11486.4
+          }
+        ],
+        "headers_ms": 1577.9,
+        "first_event_ms": 2385.7,
+        "first_token_ms": 9740.0,
+        "complete_ms": 11589.5,
+        "last_token_ms": 9825.8,
+        "post_token_ms": 1763.7,
+        "citation_count": 4,
+        "sufficient_evidence": true,
+        "stages": [
+          {
+            "step": "triage_router",
+            "latency_ms": 608.55
+          },
+          {
+            "step": "retrieval_service",
+            "latency_ms": 4068.84
+          },
+          {
+            "step": "model_usage",
+            "operation": "embedding",
+            "model_name": "models/gemini-embedding-001",
+            "latency_ms": 426.23,
+            "input_tokens": 14,
+            "output_tokens": 0
+          },
+          {
+            "step": "role_agent_verification",
+            "latency_ms": 300.49
+          },
+          {
+            "step": "model_usage",
+            "operation": "chat",
+            "model_name": "gemini-3.5-flash-lite",
+            "latency_ms": 680.08,
+            "input_tokens": 663,
+            "output_tokens": 36
+          },
+          {
+            "step": "synthesis",
+            "latency_ms": 2488.9
+          }
+        ],
+        "correct_known_fact": true
+      },
+      {
+        "case": "grounded",
+        "sample": 2,
+        "stage_events": [
+          {
+            "step": "triage_router",
+            "status": "running",
+            "elapsed_ms": 2383.1
+          },
+          {
+            "step": "triage_router",
+            "status": "completed",
+            "elapsed_ms": 2989.9
+          },
+          {
+            "step": "retrieval_service",
+            "status": "running",
+            "elapsed_ms": 2990.5
+          },
+          {
+            "step": "retrieval_service",
+            "status": "completed",
+            "elapsed_ms": 5043.7
+          },
+          {
+            "step": "synthesis",
+            "status": "running",
+            "elapsed_ms": 5044.4
+          },
+          {
+            "step": "synthesis",
+            "status": "completed",
+            "elapsed_ms": 8187.4
+          },
+          {
+            "step": "finalizing",
+            "status": "running",
+            "elapsed_ms": 8188.1
+          },
+          {
+            "step": "finalizing",
+            "status": "completed",
+            "elapsed_ms": 9752.2
+          }
+        ],
+        "headers_ms": 1577.0,
+        "first_event_ms": 2383.1,
+        "first_token_ms": 8045.4,
+        "complete_ms": 9949.6,
+        "last_token_ms": 8157.0,
+        "post_token_ms": 1792.6,
+        "citation_count": 4,
+        "sufficient_evidence": true,
+        "stages": [
+          {
+            "step": "triage_router",
+            "latency_ms": 601.2
+          },
+          {
+            "step": "retrieval_service",
+            "latency_ms": 1752.07
+          },
+          {
+            "step": "model_usage",
+            "operation": "embedding",
+            "model_name": "models/gemini-embedding-001",
+            "latency_ms": 421.28,
+            "input_tokens": 14,
+            "output_tokens": 0
+          },
+          {
+            "step": "role_agent_verification",
+            "latency_ms": 299.61
+          },
+          {
+            "step": "model_usage",
+            "operation": "chat",
+            "model_name": "gemini-3.5-flash-lite",
+            "latency_ms": 1330.57,
+            "input_tokens": 663,
+            "output_tokens": 36
+          },
+          {
+            "step": "synthesis",
+            "latency_ms": 3143.23
+          }
+        ],
+        "correct_known_fact": true
+      }
+    ],
+    "service_cold_start_measured": false,
+    "benchmark_scope": "member in existing demo workspace",
+    "health_ms": 923.7,
+    "cleanup_succeeded": true
+  }
+}

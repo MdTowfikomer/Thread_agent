@@ -104,6 +104,30 @@ def select_workspace_role(query: str, ws):
     return default
 
 
+def conversational_reply(query: str, ws, first_turn: bool) -> Optional[str]:
+    """Only complete greetings/self-description requests bypass model generation."""
+    import re
+    text = re.sub(r"\s+", " ", query.strip().lower()).rstrip("?!.,")
+    greeting = re.fullmatch(
+        r"(?:hi|hello|hey|good morning|good evening|good afternoon|greetings)"
+        r"(?:[, ]+(?:there|again|thread|threadagent|thread agent))?", text)
+    introduction = re.fullmatch(
+        r"(?:please )?(?:introduce (?:yourself|thread|threadagent|thread agent)"
+        r"|tell me about yourself|who are you|what is your name"
+        r"|what(?: is|'s) (?:thread|threadagent|thread agent)"
+        r"|give me (?:an? |the )?introduction (?:to|of) (?:thread|threadagent|thread agent))",
+        text)
+    if not greeting and not introduction:
+        return None
+    if greeting and not first_turn:
+        return "Hi! How can I help you today?"
+    return (
+        f"Hi! I'm ThreadAgent, your organizational assistant for {ws.name}. "
+        "I can help you find decisions and answers in records you're allowed to access, "
+        "summarize available context, and explain technical concepts. What would you like to know?"
+    )
+
+
 def classify_intent_and_routing(query: str, ws) -> Tuple[str, Optional[str], Optional[str], Any]:
     """Default to evidence retrieval; bypass only explicit conversational/educational intent.
 
@@ -135,7 +159,8 @@ def classify_intent_and_routing(query: str, ws) -> Tuple[str, Optional[str], Opt
         r"who are you",
         r"what is your name",
     )
-    if (conversational in greetings
+    if (conversational_reply(q, ws, True) is not None
+            or conversational in greetings
             or conversational in tuple(g + suffix for g in greetings for suffix in (" again", " thread"))
             or conversational in capabilities
             or conversational in ("ping", "status")
@@ -501,6 +526,9 @@ def prepare_synthesis(state: GraphState):
 
     # 2. GENERAL KNOWLEDGE / CONVERSATION BRANCH
     if state.intent_category == "GENERAL_KNOWLEDGE":
+        reply = conversational_reply(state.query, ws, is_first_turn)
+        if reply is not None:
+            return None, reply, None
         q_lower = state.query.strip().lower()
         greetings = ("hello", "hi", "hey", "good morning", "good evening", "good afternoon", "greetings")
         is_greeting = any(q_lower.startswith(g) or q_lower == g for g in greetings) and len(q_lower.split()) <= 3
@@ -735,6 +763,16 @@ def synthesis_node(state: GraphState) -> Dict[str, Any]:
 
     # 2. GENERAL KNOWLEDGE / CONVERSATION BRANCH
     if state.intent_category == "GENERAL_KNOWLEDGE":
+        reply = conversational_reply(state.query, ws, is_first_turn)
+        if reply is not None:
+            return {
+                "final_answer": reply,
+                "trace": list(state.trace) + [{
+                    "step": "synthesis", "agent_id": "synthesis_agent", "agent_name": "ThreadAgent",
+                    "status": "completed", "message": "Answered a greeting or self-introduction locally.",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }],
+            }
         q_lower = state.query.strip().lower()
         greetings = ("hello", "hi", "hey", "good morning", "good evening", "good afternoon", "greetings")
         is_greeting = any(q_lower.startswith(g) or q_lower == g for g in greetings) and len(q_lower.split()) <= 3

@@ -171,6 +171,18 @@ def test_missing_key_never_uses_global_key_or_deterministic_bypass(service, monk
     assert client.get(path(org)).json()["status"] == "unconfigured"
 
 
+def test_configured_greeting_is_local_and_has_no_model_usage(service, monkeypatch):
+    client, _ = account(); org = workspace(client)
+    configure(client, org, monkeypatch)
+    created, invoked = fake_chat(monkeypatch, error=RuntimeError('Must not generate a greeting'))
+    for query in ('Hello', 'Introduce yourself'):
+        result = client.post('/api/chat', json={'query': query})
+        assert result.status_code == 200, result.text
+        assert 'ThreadAgent' in result.json()['answer']
+        assert not any(event['step'] == 'model_usage' for event in result.json()['trace'])
+    assert created == [] and invoked == []
+
+
 def test_rotation_revocation_and_embedding_configuration_lock(service, monkeypatch):
     client, user = account(); org = workspace(client)
     configure(client, org, monkeypatch)
@@ -186,14 +198,14 @@ def test_rotation_revocation_and_embedding_configuration_lock(service, monkeypat
     with pytest.raises(HTTPException) as changed:
         invoke_chat(stale, "hello", context)
     assert changed.value.status_code == 409 and not invoked
-    result = client.post("/api/chat", json={"query": "Hello"})
+    result = client.post("/api/chat", json={"query": "Explain a mutex in one sentence."})
     assert result.status_code == 200 and result.json()["answer"].startswith("Beta")
     assert invoked == [KEY_B]
     result = client.delete(path(org))
     assert result.status_code == 200 and result.json()["status"] == "revoked"
     row = credential_record(org)
     assert row["encrypted_api_key"] is None and row["key_suffix"] is None
-    assert client.post("/api/chat", json={"query": "Hello"}).status_code == 409
+    assert client.post("/api/chat", json={"query": "Explain a mutex in one sentence."}).status_code == 409
     assert invoked == [KEY_B]
 
 
@@ -206,10 +218,10 @@ def test_master_missing_and_ciphertext_swap_fail_without_global_fallback(service
     with tenant_repository.transaction() as cur:
         tenant_repository.execute(cur, "UPDATE model_credentials SET encrypted_api_key=%s WHERE organization_id=%s", (copied_ciphertext, org_b))
     created, invoked = fake_chat(monkeypatch)
-    result = second.post("/api/chat", json={"query": "Hello"})
+    result = second.post("/api/chat", json={"query": "Explain a mutex in one sentence."})
     assert result.status_code == 503 and KEY_A not in result.text
     monkeypatch.delenv("THREAD_MASTER_ENCRYPTION_KEY")
-    assert first.post("/api/chat", json={"query": "Hello"}).status_code == 503
+    assert first.post("/api/chat", json={"query": "Explain a mutex in one sentence."}).status_code == 503
     assert created == [] and invoked == []
 
 
@@ -219,7 +231,7 @@ def test_two_tenants_execute_concurrently_with_isolated_clients_and_usage(servic
     configure(first, org_a, monkeypatch); configure(second, org_b, monkeypatch, KEY_B)
     created, invoked = fake_chat(monkeypatch, barrier=Barrier(2))
     with ThreadPoolExecutor(max_workers=2) as pool:
-        responses = list(pool.map(lambda client: client.post("/api/chat", json={"query": "Hello"}), (first, second)))
+        responses = list(pool.map(lambda client: client.post("/api/chat", json={"query": "Explain a mutex in one sentence."}), (first, second)))
     assert all(response.status_code == 200 for response in responses), [r.text for r in responses]
     assert responses[0].json()["answer"].startswith("Alpha") and responses[1].json()["answer"].startswith("Beta")
     assert sorted(invoked) == sorted([KEY_A, KEY_B])
@@ -236,21 +248,21 @@ def test_provider_failure_has_no_fallback_or_secret_in_errors(service, monkeypat
     class Failure(RuntimeError):
         status_code = 429
     created, invoked = fake_chat(monkeypatch, error=Failure("raw request contains " + KEY_A))
-    result = client.post("/api/chat", json={"query": "Hello"})
+    result = client.post("/api/chat", json={"query": "Explain a mutex in one sentence."})
     assert result.status_code == 429 and len(invoked) == 1
     assert credential_record(org)["status"] == "active"
     assert KEY_A not in result.text + caplog.text + capsys.readouterr().out
     Failure.status_code = 403
-    assert client.post("/api/chat", json={"query": "Hello"}).status_code == 409
+    assert client.post("/api/chat", json={"query": "Explain a mutex in one sentence."}).status_code == 409
     assert credential_record(org)["status"] == "invalid"
-    assert client.post("/api/chat", json={"query": "Hello"}).status_code == 409
+    assert client.post("/api/chat", json={"query": "Explain a mutex in one sentence."}).status_code == 409
     assert len(invoked) == 2
 
 
 def test_missing_usage_is_labelled_as_estimated(service, monkeypatch):
     client, _ = account(); org = workspace(client); configure(client, org, monkeypatch)
     fake_chat(monkeypatch, reported=False)
-    result = client.post("/api/chat", json={"query": "Hello"})
+    result = client.post("/api/chat", json={"query": "Explain a mutex in one sentence."})
     assert result.status_code == 200, result.text
     usage = [event for event in result.json()["trace"] if event["step"] == "model_usage"][0]
     assert usage["is_estimated"] is True and usage["usage_source"] == "character_heuristic"

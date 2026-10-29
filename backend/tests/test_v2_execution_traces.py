@@ -14,7 +14,8 @@ def trace_master(monkeypatch):
     monkeypatch.setenv('THREAD_MASTER_ENCRYPTION_KEY',MASTER)
 
 
-def ask(client,question='Hello'):
+# Greetings use local replies; usage tests require an actual generation route.
+def ask(client,question='Explain a mutex in one sentence.'):
     result=client.post('/api/chat',json={'query':question})
     assert result.status_code==200,result.text
     return result.json()
@@ -64,7 +65,7 @@ def test_failures_are_persisted_with_safe_details_and_response_trace_header(serv
     assert trace['outcome']=='failed' and trace['stages'][0]['error_status']==409
     configure(client,org,monkeypatch)
     fake_chat(monkeypatch,error=RuntimeError('raw password '+KEY_A))
-    failed=client.post('/api/chat',json={'query':'Hello'})
+    failed=client.post('/api/chat',json={'query':'Explain a mutex in one sentence.'})
     trace=client.get(f"/api/v2/organizations/{org}/traces/{failed.headers['X-Thread-Trace-Id']}")
     assert trace.status_code==200 and trace.json()['outcome']=='failed'
     assert KEY_A not in trace.text and 'raw password' not in trace.text

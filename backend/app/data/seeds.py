@@ -82,6 +82,26 @@ def get_seed_data(organization_id: str = "gdg_mcet") -> Tuple[List[SourceRecord]
             "tags": ["rsvp", "certificates", "community", "registration", "rules"],
             "entities": {"rsvp_link": "gdg.community.dev/events/mcet-genai-2026", "seat_limit": 150},
             "metadata": {"channel": "general", "message_id": "disc_502"}
+        },
+        # Item 6: GitHub Pull Request (Export Job Retry with Backoff)
+        {
+            "source_type": SourceType.GITHUB,
+            "source_uri": "https://github.com/gdg-mcet/core-engine/pull/142",
+            "author": "Marcus Vance",
+            "author_role": "Senior Backend Engineer",
+            "timestamp": now - timedelta(days=20),
+            "title": "Add retry with backoff to export job",
+            "content": "GitHub PR #142: Add retry with backoff to export job.\n\nDescription: Adds 3 retries with backoff because the storage service allows only 3 requests per second. Reduced from 5 after review to prevent worker queue starvation during partial storage outages.\n\nMerged by Tech Lead Priya Ramesh into main.",
+            "permission": PermissionLevel.PUBLIC_COMMUNITY,
+            "tags": ["github", "pr", "export_job", "retry", "backoff", "rate_limit", "storage_service"],
+            "entities": {
+                "pr_number": 142,
+                "feature": "export job",
+                "retries": 3,
+                "rate_limit": "3 requests per second",
+                "decision": "reduced from 5 after review"
+            },
+            "metadata": {"repo_name": "core-engine", "pr_number": 142, "state": "merged", "merged": True}
         }
     ]
 
